@@ -148,12 +148,21 @@ export function verifyPresentation(presentation: Uint8Array): Claim {
   const file = join(dir, 'presentation.tlsn');
   try {
     writeFileSync(file, presentation);
-    // NOTARY_PUBKEY trusts a remote notary (e.g. the one on Google Cloud); otherwise derive it from the local key file.
-    const notaryPubkey =
+    // NOTARY_PUBKEY trusts remote notaries (comma-separated, e.g. Cloud Run and the VM); otherwise derive it from the local key file.
+    const notaryPubkeys = (
       process.env.NOTARY_PUBKEY ??
-      execFileSync(PROVER_BIN, ['pubkey', '--key', NOTARY_KEY], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    const output = execFileSync(PROVER_BIN, ['verify', file, '--trust', notaryPubkey], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return JSON.parse(output);
+      execFileSync(PROVER_BIN, ['pubkey', '--key', NOTARY_KEY], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    ).split(',');
+    let lastError: unknown;
+    for (const notaryPubkey of notaryPubkeys) {
+      try {
+        const output = execFileSync(PROVER_BIN, ['verify', file, '--trust', notaryPubkey.trim()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        return JSON.parse(output);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   } catch (error) {
     const stderr = String((error as { stderr?: string }).stderr ?? '');
     const reason = stderr.match(/Error: (.*)/)?.[1] ?? 'presentation could not be verified';

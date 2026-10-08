@@ -65,6 +65,26 @@ pub async fn serve_notary(listen: &str, key_path: &Path) -> Result<()> {
     }
 }
 
+/// Accept prover connections over WebSocket (for Cloud Run, which only routes HTTP/WebSocket).
+pub async fn serve_notary_ws(listen: &str, key_path: &Path) -> Result<()> {
+    let key = load_or_create_key(key_path)?;
+    let listener = tokio::net::TcpListener::bind(listen).await?;
+    println!("notary listening on ws://{listen}, public key {}", public_key_hex(&key)?);
+    loop {
+        let (socket, peer) = listener.accept().await?;
+        tokio::spawn(async move {
+            let result = async {
+                let ws = async_tungstenite::tokio::accept_async(socket).await?;
+                notary_io(ws_stream_tungstenite::WsStream::new(ws), key).await
+            };
+            match result.await {
+                Ok(()) => info!("signed an attestation for {peer} (websocket)"),
+                Err(error) => tracing::warn!("websocket session with {peer} failed: {error:#}"),
+            }
+        });
+    }
+}
+
 /// Development key store: 32 random bytes in a file. Production uses a KMS (see ARCHITECTURE.md).
 pub fn load_or_create_key(path: &Path) -> Result<[u8; 32]> {
     if !path.exists() {
@@ -87,7 +107,30 @@ pub async fn notarize<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>
     socket: S,
     login: &str,
 ) -> Result<(Attestation, Secrets)> {
-    let session = Session::new(socket.compat());
+    notarize_io(socket.compat(), login).await
+}
+
+/// Connect to the notary at `address` (`host:port` for TCP, `ws://` or `wss://` URL for WebSocket) and notarize.
+pub async fn notarize_via(address: &str, login: &str) -> Result<(Attestation, Secrets)> {
+    if address.starts_with("ws://") || address.starts_with("wss://") {
+        let (ws, _) = async_tungstenite::tokio::connect_async(address)
+            .await
+            .with_context(|| format!("cannot reach the notary at {address}"))?;
+        notarize_io(ws_stream_tungstenite::WsStream::new(ws), login).await
+    } else {
+        let socket = tokio::net::TcpStream::connect(address)
+            .await
+            .with_context(|| format!("cannot reach the notary at {address}"))?;
+        notarize(socket, login).await
+    }
+}
+
+/// Step 1, prover side, over any byte stream (TCP or WebSocket).
+pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + Send + Unpin + 'static>(
+    socket: S,
+    login: &str,
+) -> Result<(Attestation, Secrets)> {
+    let session = Session::new(socket);
     let (driver, mut handle) = session.split();
     let driver_task = tokio::spawn(driver);
 
@@ -158,19 +201,24 @@ pub async fn notarize<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>
 
     handle.close();
     let mut socket = driver_task.await??;
-    socket.write_all(&bincode::serialize(&request)?).await?;
+    send_frame(&mut socket, &bincode::serialize(&request)?).await?;
+    let attestation: Attestation = bincode::deserialize(&recv_frame(&mut socket).await?)?;
     socket.close().await?;
-
-    let mut attestation_bytes = Vec::new();
-    socket.read_to_end(&mut attestation_bytes).await?;
-    let attestation: Attestation = bincode::deserialize(&attestation_bytes)?;
     request.validate(&attestation, &CryptoProvider::default())?;
     Ok((attestation, secrets))
 }
 
 /// Step 1, notary side: take part in MPC-TLS without seeing the content, then sign the attestation.
 pub async fn notary<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(socket: S, key: [u8; 32]) -> Result<()> {
-    let session = Session::new(socket.compat());
+    notary_io(socket.compat(), key).await
+}
+
+/// Step 1, notary side, over any byte stream (TCP or WebSocket).
+pub async fn notary_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + Send + Unpin + 'static>(
+    socket: S,
+    key: [u8; 32],
+) -> Result<()> {
+    let session = Session::new(socket);
     let (driver, mut handle) = session.split();
     let driver_task = tokio::spawn(driver);
 
@@ -193,9 +241,7 @@ pub async fn notary<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(s
 
     handle.close();
     let mut socket = driver_task.await??;
-    let mut request_bytes = Vec::new();
-    socket.read_to_end(&mut request_bytes).await?;
-    let request: AttestationRequest = bincode::deserialize(&request_bytes)?;
+    let request: AttestationRequest = bincode::deserialize(&recv_frame(&mut socket).await?)?;
 
     let signing_key = k256::ecdsa::SigningKey::from_bytes(&key.into())?;
     let mut provider = CryptoProvider::default();
@@ -218,9 +264,34 @@ pub async fn notary<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(s
         .transcript_commitments(transcript_commitments);
     let attestation = builder.build(&provider)?;
 
-    socket.write_all(&bincode::serialize(&attestation)?).await?;
-    socket.close().await?;
+    send_frame(&mut socket, &bincode::serialize(&attestation)?).await?;
+    // Wait for the prover to close: closing first could drop the attestation before it is delivered.
+    let mut rest = Vec::new();
+    let _ = socket.read_to_end(&mut rest).await;
     Ok(())
+}
+
+// After MPC-TLS the request and the attestation are sent as length-prefixed frames, not "until end of
+// stream": a WebSocket cannot be half-closed, so the end of the stream cannot mark the end of a message.
+const MAX_FRAME: usize = 1 << 20;
+
+async fn send_frame<S: futures::io::AsyncWrite + Unpin>(socket: &mut S, bytes: &[u8]) -> Result<()> {
+    socket.write_all(&(bytes.len() as u32).to_be_bytes()).await?;
+    socket.write_all(bytes).await?;
+    socket.flush().await?;
+    Ok(())
+}
+
+async fn recv_frame<S: futures::io::AsyncRead + Unpin>(socket: &mut S) -> Result<Vec<u8>> {
+    let mut length = [0u8; 4];
+    socket.read_exact(&mut length).await?;
+    let length = u32::from_be_bytes(length) as usize;
+    if length > MAX_FRAME {
+        bail!("frame of {length} bytes is too large");
+    }
+    let mut bytes = vec![0u8; length];
+    socket.read_exact(&mut bytes).await?;
+    Ok(bytes)
 }
 
 /// Step 2: build a presentation that reveals only the fields the claim needs.

@@ -2,14 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tlsn::attestation::presentation::Presentation;
 use tracing::info;
 
 use smart_ssi_prover::{
-    DEV_NOTARY_KEY, REVEALED_FIELDS, interpret, load_or_create_key, notarize, notary, present, public_key_hex,
-    serve_notary, verify,
+    DEV_NOTARY_KEY, REVEALED_FIELDS, interpret, load_or_create_key, notarize, notarize_via, notary, present,
+    public_key_hex, serve_notary, serve_notary_ws, verify,
 };
 
 #[derive(Parser, Debug)]
@@ -21,11 +21,14 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Run the notary as a TCP server.
+    /// Run the notary as a TCP server (or a WebSocket server with --ws).
     Notary {
-        /// Address to listen on.
-        #[arg(long, default_value = "127.0.0.1:7047")]
-        listen: String,
+        /// Address to listen on. With --ws and no --listen, 0.0.0.0:$PORT (Cloud Run).
+        #[arg(long)]
+        listen: Option<String>,
+        /// Accept WebSocket connections instead of raw TCP.
+        #[arg(long)]
+        ws: bool,
         /// Notary signing key (32 raw bytes). Created on first run if missing.
         #[arg(long, default_value = "notary.key")]
         key: PathBuf,
@@ -47,7 +50,7 @@ enum Command {
     Prove {
         /// GitHub login to prove facts about.
         login: String,
-        /// Notary address. Without it, an in-process notary with a development key is used.
+        /// Notary address: host:port (TCP) or ws:// / wss:// URL. Without it, an in-process notary with a development key is used.
         #[arg(long)]
         notary: Option<String>,
         /// Notary public key (hex) the issuer accepts. Without it, any notary key is accepted.
@@ -67,7 +70,11 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     match Cli::parse().command {
-        Command::Notary { listen, key } => serve_notary(&listen, &key).await,
+        Command::Notary { listen, ws: false, key } => serve_notary(&listen.unwrap_or("127.0.0.1:7047".into()), &key).await,
+        Command::Notary { listen, ws: true, key } => {
+            let listen = listen.unwrap_or_else(|| format!("0.0.0.0:{}", std::env::var("PORT").unwrap_or("8080".into())));
+            serve_notary_ws(&listen, &key).await
+        }
         Command::Pubkey { key } => {
             println!("{}", public_key_hex(&load_or_create_key(&key)?)?);
             Ok(())
@@ -87,9 +94,8 @@ async fn prove(login: &str, address: Option<String>, trust: Option<String>, out:
 
     let (attestation, secrets) = match address {
         Some(address) => {
-            let socket = tokio::net::TcpStream::connect(&address).await.with_context(|| format!("notary at {address}"))?;
-            info!("connected to notary at {address}");
-            notarize(socket, login).await?
+            info!("notarizing with the notary at {address}");
+            notarize_via(&address, login).await?
         }
         None => {
             let (notary_socket, prover_socket) = tokio::io::duplex(1 << 23);

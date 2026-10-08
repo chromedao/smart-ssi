@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use smart_ssi_prover::{interpret, notarize, present, verify};
+use smart_ssi_prover::{interpret, notarize_via, present, verify};
 
 uniffi::setup_scaffolding!();
 
@@ -33,16 +33,13 @@ impl From<anyhow::Error> for ProveError {
     }
 }
 
-/// Prove facts about a GitHub account through the notary at `notary` (host:port).
+/// Prove facts about a GitHub account through the notary at `notary` (host:port for TCP, or a ws:// / wss:// URL).
 #[uniffi::export]
 pub fn prove_github(login: String, notary: String) -> Result<GithubProof, ProveError> {
     let start = Instant::now();
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(anyhow::Error::from)?;
     runtime.block_on(async {
-        let socket = tokio::net::TcpStream::connect(&notary)
-            .await
-            .map_err(|e| anyhow::anyhow!("cannot reach the notary at {notary}: {e}"))?;
-        let (attestation, secrets) = notarize(socket, &login).await?;
+        let (attestation, secrets) = notarize_via(&notary, &login).await?;
         let presentation = present(&attestation, &secrets)?;
         // The app checks its own proof before sending it; the issuer checks it again against the trusted key.
         let revealed = verify(&presentation, None)?;
