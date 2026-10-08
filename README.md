@@ -13,6 +13,7 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 3a | Notary as its own TCP server with its own key; the issuer only accepts the trusted notary key | Done |
 | 3b | Proof of ownership: authenticated GitHub request ([#2](https://github.com/chromedao/smart-ssi/issues/2)) | Next |
 | 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Done on devnet |
+| 3d | Issuer as an HTTP API, requests signed by the wallet, replay protection ([#3](https://github.com/chromedao/smart-ssi/issues/3)) | Done |
 | 4a | Prover library compiles for iOS (device, simulator) and Android; runs inside the iOS simulator against our notary | Done |
 | 4b | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
 
@@ -61,6 +62,21 @@ npm run issuer -- issue ../prover/out/presentation.tlsn --user <wallet>
 npm run issuer -- check --user <wallet>                   # VALID / INVALID, as any verifier
 npm run issuer -- revoke --user <wallet>
 ```
+
+### Issuer API
+
+```bash
+npm run server                                            # http://localhost:8787
+npm run demo-client -- ../prover/out/presentation.tlsn    # plays the app, including requests that must fail
+```
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/v1/attestations/:wallet` | none | Public: what any verifier calls. `valid` plus the data, or the reason it is invalid |
+| `POST` | `/v1/attestations` | `wallet`, `presentation` (base64), `signature` | The wallet signs `smart-ssi:issue:<sha256(presentation)>`. A proof is accepted once, within 15 minutes of being made |
+| `DELETE` | `/v1/attestations/:wallet` | `timestamp`, `signature` | The wallet signs `smart-ssi:revoke:<wallet>:<timestamp>` (within 5 minutes) |
+
+Tested: 401 when another wallet signs (issue and revoke), 409 when a proof is reused, 422 for a presentation from an untrusted notary, 201 then `valid: true`, then revoke and `valid: false`.
 
 The issuer never trusts the prover's `claim.json`: it verifies the presentation itself (`smart-ssi-prover verify`) against the trusted notary key. Keys live in `issuer/keys/` and are never committed: fee payer (pays for accounts), credential authority, attestation signer. The fee payer needs devnet SOL ([faucet](https://faucet.solana.com)).
 

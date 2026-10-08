@@ -7,3 +7,4 @@ notary.key
 *.log
 issuer/keys/
 node_modules/
+issuer/data/
