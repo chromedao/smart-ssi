@@ -15,7 +15,8 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Done on devnet |
 | 3d | Issuer as an HTTP API, requests signed by the wallet, replay protection ([#3](https://github.com/chromedao/smart-ssi/issues/3)) | Done |
 | 4a | Prover library compiles for iOS (device, simulator) and Android; runs inside the iOS simulator against our notary | Done |
-| 4b | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
+| 4b | iOS app (SwiftUI + Rust via UniFFI): proof on the phone, wallet key in the Keychain, attestation through the issuer API ([#5](https://github.com/chromedao/smart-ssi/issues/5)) | Done, simulator |
+| 4c | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
 
 ## Run
 
@@ -51,6 +52,22 @@ cd prover && CARGO_TARGET_DIR=../vendor/tlsn/target cargo build --release --bin 
 xcrun simctl boot "iPhone 18 Pro"
 xcrun simctl spawn "iPhone 18 Pro" $PWD/../vendor/tlsn/target/aarch64-apple-ios-sim/release/smart-ssi-prover prove <login> --notary 127.0.0.1:7047
 ```
+
+### iOS app
+
+```bash
+mobile/build-ios.sh                      # Rust → XCFramework, Swift bindings, Xcode project (XcodeGen)
+open mobile/ios/SmartSSI.xcodeproj       # run on a simulator
+```
+
+With the notary (`127.0.0.1:7047`) and the issuer API (`http://127.0.0.1:8787`) running on the Mac, the app:
+
+1. creates an Ed25519 wallet key in the Keychain (its Solana address is shown);
+2. runs the whole proof on the phone through the Rust library (about 1.5 s in the simulator);
+3. shows what the issuer will see and the claim;
+4. asks the issuer API for the attestation, signed by the wallet; `CHECK` and `REVOKE` call the API too.
+
+Both servers can be changed under "Development servers". In the simulator, `xcrun simctl launch <device> xyz.chromedao.smartssi.prototype -login <name>` prefills the login.
 
 ## Issuer (Solana devnet)
 

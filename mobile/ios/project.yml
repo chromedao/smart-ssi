@@ -1,0 +1,32 @@
+name: SmartSSI
+options:
+  bundleIdPrefix: xyz.chromedao
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  SmartSSI:
+    type: application
+    platform: iOS
+    sources:
+      - SmartSSI
+      - Generated/smart_ssi_mobile.swift
+    dependencies:
+      - framework: SmartSSICore.xcframework
+        embed: false
+    info:
+      path: SmartSSI/Info.plist
+      properties:
+        CFBundleDisplayName: Smart-SSI
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Smart-SSI connects to a development notary and issuer on your local network.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.chromedao.smartssi.prototype
+        SWIFT_VERSION: "5.0"
+        OTHER_LDFLAGS: "-lc++"
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"

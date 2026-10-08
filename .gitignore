@@ -8,3 +8,7 @@ notary.key
 issuer/keys/
 node_modules/
 issuer/data/
+mobile/ios/build/
+mobile/ios/SmartSSICore.xcframework/
+mobile/ios/Generated/
+mobile/ios/SmartSSI.xcodeproj/
