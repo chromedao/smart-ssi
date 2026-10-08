@@ -3,6 +3,7 @@ package xyz.chromedao.smartssi
 import android.content.Context
 import android.os.Bundle
 import android.util.Base64
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
@@ -13,11 +14,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -137,7 +140,7 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String) {
     }
 
     Column(
-        Modifier.fillMaxSize().background(Color.Black).verticalScroll(rememberScrollState()).padding(20.dp),
+        Modifier.fillMaxSize().background(Color.Black).systemBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("CHROME DAO · SMART-SSI", color = Green, fontFamily = Mono, fontSize = 12.sp)
@@ -150,7 +153,7 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String) {
         }
 
         Section("GITHUB") {
-            OutlinedTextField(login, { login = it }, label = { Text("login") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(login, { login = it }, label = { Text("login") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
             GreenButton(if (busy) "WORKING…" else "PROVE ON THIS PHONE", enabled = !busy) {
                 if (login.isBlank()) return@GreenButton note("enter a GitHub login")
                 busy = true
@@ -160,8 +163,12 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String) {
                     val result = withContext(Dispatchers.Default) { runCatching { proveGithub(login.trim(), notary) } }
                     busy = false
                     result.fold(
-                        { proof = it; note("proof done in %.1f s, %d bytes".format(it.seconds, it.presentation.size)) },
-                        { note("proof failed: ${it.message}") },
+                        {
+                            proof = it
+                            note("proof done in %.1f s, %d bytes".format(it.seconds, it.presentation.size))
+                            Log.i("SmartSSI", "proof done in %.1f s".format(it.seconds))
+                        },
+                        { note("proof failed: ${it.message}"); Log.e("SmartSSI", "proof failed: ${it.message}") },
                     )
                 }
             }
@@ -182,8 +189,8 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String) {
         }
 
         Section("DEVELOPMENT SERVERS") {
-            OutlinedTextField(notary, { notary = it }, label = { Text("notary host:port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(issuerUrl, { issuerUrl = it }, label = { Text("issuer URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(notary, { notary = it }, label = { Text("notary host:port") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(issuerUrl, { issuerUrl = it }, label = { Text("issuer URL") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
         }
 
         Section("LOG") { log.forEach { Text(it, color = Color.Gray, fontFamily = Mono, fontSize = 11.sp) } }
@@ -204,3 +211,14 @@ private fun GreenButton(label: String, enabled: Boolean, modifier: Modifier = Mo
         Text(label, color = Green, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 12.sp)
     }
 }
+
+@Composable
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = Color.White,
+    unfocusedTextColor = Color.White,
+    focusedBorderColor = Green,
+    unfocusedBorderColor = Color.Gray,
+    focusedLabelColor = Green,
+    unfocusedLabelColor = Color.Gray,
+    cursorColor = Green,
+)

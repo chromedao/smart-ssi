@@ -16,7 +16,8 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 3d | Issuer as an HTTP API, requests signed by the wallet, replay protection ([#3](https://github.com/chromedao/smart-ssi/issues/3)) | Done |
 | 4a | Prover library compiles for iOS (device, simulator) and Android; runs inside the iOS simulator against our notary | Done |
 | 4b | iOS app (SwiftUI + Rust via UniFFI): proof on the phone, wallet key in the Keychain, attestation through the issuer API ([#5](https://github.com/chromedao/smart-ssi/issues/5)) | Done, simulator |
-| 4c | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
+| 4c | Android app (Compose + Rust via UniFFI), same flow ([#6](https://github.com/chromedao/smart-ssi/issues/6)) | Done, emulator |
+| 4d | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
 
 ## Run
 
@@ -68,6 +69,28 @@ With the notary (`127.0.0.1:7047`) and the issuer API (`http://127.0.0.1:8787`) 
 4. asks the issuer API for the attestation, signed by the wallet; `CHECK` and `REVOKE` call the API too.
 
 Both servers can be changed under "Development servers". In the simulator, `xcrun simctl launch <device> xyz.chromedao.smartssi.prototype -login <name>` prefills the login.
+
+### Android app
+
+```bash
+mobile/build-android.sh                  # Rust → arm64-v8a .so + Kotlin bindings (Android NDK 27)
+cd mobile/android && ./gradlew assembleDebug   # JAVA_HOME = Android Studio's JBR
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n xyz.chromedao.smartssi.prototype/xyz.chromedao.smartssi.MainActivity -e login <name>
+```
+
+Same flow as iOS. The wallet seed comes from the Rust library (Ed25519, address checked against `@solana/kit`) and is stored with `EncryptedSharedPreferences`. From the emulator, the Mac is `10.0.2.2` (notary `10.0.2.2:7047`, issuer `http://10.0.2.2:8787`).
+
+### Proof time so far
+
+| Where | Time |
+| --- | --- |
+| Mac (CLI) | ~2 s |
+| iOS simulator (app) | ~1.5 s |
+| Android emulator, software AES | 144.6 s |
+| Android emulator, `+aes,+sha2` | 59.5 s |
+
+The Android target only enables NEON by default, so `build-android.sh` turns on the ARMv8 crypto extensions. The emulator (4 virtual cores) is not a reliable reference: real phones decide ([#4](https://github.com/chromedao/smart-ssi/issues/4)).
 
 ## Issuer (Solana devnet)
 
