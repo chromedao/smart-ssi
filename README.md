@@ -104,10 +104,11 @@ Same flow as iOS. The wallet seed comes from the Rust library (Ed25519, address 
 | --- | --- |
 | Mac (CLI) | ~2 s |
 | iOS simulator (app) | ~1.5 s |
+| **iPhone 12 Pro (app), Google Cloud notary, Wi-Fi** | **5.0 s** |
 | Android emulator, software AES | 144.6 s |
 | Android emulator, `+aes,+sha2` | 59.5 s |
 
-The Android target only enables NEON by default, so `build-android.sh` turns on the ARMv8 crypto extensions. The emulator (4 virtual cores) is not a reliable reference: real phones decide ([#4](https://github.com/chromedao/smart-ssi/issues/4)).
+The Android target only enables NEON by default, so `build-android.sh` turns on the ARMv8 crypto extensions. The emulator (4 virtual cores) is not a reliable reference: the first real phone (iPhone 12 Pro, 2020) proves in 5.0 s end to end, attestation issued on devnet. Android phone and mobile data still to measure ([#4](https://github.com/chromedao/smart-ssi/issues/4)).
 
 ## Issuer (Solana devnet)
 
