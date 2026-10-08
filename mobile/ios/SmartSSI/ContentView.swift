@@ -369,7 +369,7 @@ private struct Review: View {
                 .background(card, in: RoundedRectangle(cornerRadius: 14))
         }
         Text(facts.version == 2
-             ? "Nothing else: no repository names, no code, no email, no GitHub token. Languages are counted from your own commits over the last 12 months. Your badge is tied to a private key that only this phone holds."
+             ? "Nothing else: no repository names, no code, no email, no GitHub token. Languages are counted from your own commits to public projects over the last 12 months; private work counts in your contributions, never by name or language. Your badge is tied to a private key that only this phone holds."
              : "Nothing else: no email, no private repositories, no GitHub token. Your badge is tied to a private key that only this phone holds.")
             .font(.callout).foregroundStyle(dim)
         Eligibility(active: facts.active, repos: facts.publicRepos, years: facts.accountAgeYears)
@@ -461,7 +461,7 @@ struct LanguageBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("WHAT YOU CODE").font(.caption2.monospaced()).foregroundStyle(dim)
+            Text("WHAT YOU CODE · PUBLIC PROJECTS").font(.caption2.monospaced()).foregroundStyle(dim)
             GeometryReader { geometry in
                 HStack(spacing: 2) {
                     ForEach(languages, id: \.name) { language in
