@@ -1,4 +1,4 @@
-import SafariServices
+import AuthenticationServices
 import SwiftUI
 import UIKit
 
@@ -23,6 +23,9 @@ final class ProofModel: ObservableObject {
     @Published var issuerURL = UserDefaults.standard.string(forKey: "issuer") ?? "https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app"
     @Published var walletAddress = ""
     @Published var deviceCode: GitHubLogin.DeviceCode?
+    private var signIn: Task<Void, Never>?
+    private var browser: ASWebAuthenticationSession?
+    private let anchor = WindowAnchor()
     @Published var busy = false
     @Published var proof: GithubProof?
     @Published var log: [String] = []
@@ -45,22 +48,43 @@ final class ProofModel: ObservableObject {
     func proveMine() {
         busy = true
         proof = nil
-        Task {
+        signIn = Task {
             do {
                 let login = GitHubLogin()
                 let code = try await login.start()
                 UIPasteboard.general.string = code.user_code
                 deviceCode = code
                 note("GitHub code \(code.user_code) (copied)")
+                openGitHub()
                 let token = try await login.token(for: code)
-                deviceCode = nil
+                closeGitHub()
                 run("proving your GitHub account through \(notary)…") { try proveGithubOwner(token: token, notary: $0) }
             } catch {
-                deviceCode = nil
+                closeGitHub()
                 busy = false
-                note("sign-in failed: \(error.localizedDescription)")
+                note(error is CancellationError ? "sign-in cancelled" : "sign-in failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// github.com/login/device in the system sign-in window: it shares Safari's GitHub session, and
+    /// password managers work there. The device flow has no redirect, so the app closes it once GitHub
+    /// hands over the token; if the user closes it first, it can be reopened.
+    func openGitHub() {
+        guard let code = deviceCode, let url = URL(string: code.verification_uri) else { return }
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "smartssi") { _, _ in }
+        session.presentationContextProvider = anchor
+        session.prefersEphemeralWebBrowserSession = false
+        browser = session
+        session.start()
+    }
+
+    func cancelSignIn() { signIn?.cancel() }
+
+    private func closeGitHub() {
+        browser?.cancel()
+        browser = nil
+        deviceCode = nil
     }
 
     /// Development: public facts about any account. The issuer refuses these (no ownership).
@@ -129,7 +153,17 @@ struct ContentView: View {
                 }
 
                 section("GITHUB") {
-                    button(model.busy ? "PROVING…" : "SIGN IN WITH GITHUB AND PROVE", action: model.proveMine)
+                    if let code = model.deviceCode {
+                        Text("Enter this code on GitHub, then authorize Smart-SSI:").font(.caption.monospaced())
+                        Text(code.user_code).font(.title.monospaced().bold()).foregroundStyle(green).textSelection(.enabled)
+                        HStack {
+                            button("OPEN GITHUB", action: model.openGitHub)
+                            button("CANCEL", action: model.cancelSignIn)
+                        }
+                    } else {
+                        button(model.busy ? "PROVING…" : "SIGN IN WITH GITHUB AND PROVE", action: model.proveMine)
+                            .disabled(model.busy)
+                    }
                     Text("Proves the account you sign in to. Your password and token never leave GitHub and this phone.")
                         .font(.caption2.monospaced()).foregroundStyle(.secondary)
                 }
@@ -142,13 +176,14 @@ struct ContentView: View {
                         Text(proof.claimJson).font(.caption.monospaced()).foregroundStyle(green).textSelection(.enabled)
                         Text(String(format: "%.1f s on device", proof.seconds)).font(.caption2.monospaced()).foregroundStyle(.secondary)
                     }
-                    button("GET ATTESTATION", action: model.requestAttestation)
+                    button("GET ATTESTATION", action: model.requestAttestation).disabled(model.busy)
                 }
 
                 HStack {
                     button("CHECK") { model.issuer("check") { try await $0.check() } }
                     button("REVOKE") { model.issuer("revoke") { try await $0.revoke() } }
                 }
+                .disabled(model.busy)
 
                 DisclosureGroup("Development") {
                     TextField("public GitHub login", text: $model.login)
@@ -160,6 +195,7 @@ struct ContentView: View {
                     TextField("issuer URL", text: $model.issuerURL).textFieldStyle(.roundedBorder)
                 }
                 .font(.caption.monospaced())
+                .disabled(model.busy)
 
                 section("LOG") {
                     ForEach(Array(model.log.enumerated()), id: \.offset) { _, line in
@@ -170,18 +206,6 @@ struct ContentView: View {
             .padding()
         }
         .background(Color.black)
-        .disabled(model.busy)
-        .sheet(item: $model.deviceCode) { code in
-            VStack(spacing: 12) {
-                Text("Enter this code on GitHub").font(.caption.monospaced())
-                Text(code.user_code).font(.title.monospaced().bold()).foregroundStyle(green).textSelection(.enabled)
-                Text("Copied. Paste it below, then approve.").font(.caption2.monospaced()).foregroundStyle(.secondary)
-                SafariView(url: URL(string: code.verification_uri)!)
-            }
-            .padding(.top)
-            .background(Color.black)
-            .interactiveDismissDisabled()
-        }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -204,9 +228,9 @@ extension GitHubLogin.DeviceCode: Identifiable {
     var id: String { device_code }
 }
 
-/// github.com in an in-app Safari sheet: password managers and autofill work there.
-struct SafariView: UIViewControllerRepresentable {
-    let url: URL
-    func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
-    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+/// The window the GitHub sign-in sheet is presented from.
+final class WindowAnchor: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? ASPresentationAnchor()
+    }
 }
