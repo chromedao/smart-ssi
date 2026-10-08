@@ -48,6 +48,7 @@ final class ProofModel: ObservableObject {
     func proveMine() {
         busy = true
         proof = nil
+        wakeNotary()
         signIn = Task {
             do {
                 let login = GitHubLogin()
@@ -77,6 +78,13 @@ final class ProofModel: ObservableObject {
         session.prefersEphemeralWebBrowserSession = false
         browser = session
         session.start()
+    }
+
+    /// The Cloud Run notary scales to zero and takes ~10 s to start. Any request starts an instance, so poke
+    /// it while the user signs in to GitHub (15-20 s): it is warm when the proof begins. The answer is ignored.
+    private func wakeNotary() {
+        guard let url = URL(string: notary.replacingOccurrences(of: "wss://", with: "https://")), url.scheme == "https" else { return }
+        URLSession.shared.dataTask(with: url).resume()
     }
 
     func cancelSignIn() { signIn?.cancel() }
