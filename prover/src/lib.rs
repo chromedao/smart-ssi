@@ -31,7 +31,7 @@ use tlsn::{
         signing::Secp256k1Signer,
     },
     config::{
-        prove::ProveConfig, prover::ProverConfig, tls::TlsClientConfig, tls_commit::mpc::MpcTlsConfig,
+        prove::ProveConfig, prover::ProverConfig, tls::TlsClientConfig, tls_commit::mpc::{MpcTlsConfig, NetworkSetting},
         verifier::VerifierConfig,
     },
     connection::{CertBinding, ConnectionInfo, HandshakeData, ServerName, TranscriptLength},
@@ -43,12 +43,27 @@ use tlsn::{
 use tlsn_formats::http::{BodyContent, DefaultHttpCommitter, HttpCommit, HttpTranscript};
 
 pub const HOST: &str = "api.github.com";
-pub const MAX_SENT_DATA: usize = 1 << 12;
-pub const MAX_RECV_DATA: usize = 1 << 14;
+/// The request is ~250 bytes (with the OAuth token). The phone uploads ~23 MB fixed + ~10 KB per byte allowed here.
+pub const MAX_SENT_DATA: usize = 512;
+/// GitHub answers 2.5-4 KB; received data is decrypted after the session and costs little.
+pub const MAX_RECV_DATA: usize = 1 << 13;
 // Development only: the real notary will load its key from a KMS (see ARCHITECTURE.md).
 pub const DEV_NOTARY_KEY: [u8; 32] = [7u8; 32];
 // Fields revealed to the issuer. Everything else in the response stays hidden.
 pub const REVEALED_FIELDS: [&str; 3] = ["login", "public_repos", "created_at"];
+
+/// MPC-TLS sizing. The phone uploads preprocessing data in proportion to these limits, so they are kept
+/// close to what GitHub needs. Experiment overrides: SMART_SSI_MAX_SENT, SMART_SSI_MAX_RECV, SMART_SSI_NETWORK.
+fn mpc_tls_config() -> Result<MpcTlsConfig> {
+    let env = |name: &str, default: usize| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+    let mut config = MpcTlsConfig::builder()
+        .max_sent_data(env("SMART_SSI_MAX_SENT", MAX_SENT_DATA))
+        .max_recv_data(env("SMART_SSI_MAX_RECV", MAX_RECV_DATA));
+    if std::env::var("SMART_SSI_NETWORK").as_deref() == Ok("bandwidth") {
+        config = config.network(NetworkSetting::Bandwidth);
+    }
+    Ok(config.build()?)
+}
 
 /// Whose GitHub account is proven.
 pub enum Subject {
@@ -183,7 +198,7 @@ pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + S
 
     let prover = handle
         .new_prover(ProverConfig::builder().build()?)?
-        .commit(MpcTlsConfig::builder().max_sent_data(MAX_SENT_DATA).max_recv_data(MAX_RECV_DATA).build()?)
+        .commit(mpc_tls_config()?)
         .await?;
 
     let client_socket = tokio::net::TcpStream::connect((HOST, 443)).await?;
