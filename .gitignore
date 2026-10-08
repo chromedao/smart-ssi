@@ -12,3 +12,9 @@ mobile/ios/build/
 mobile/ios/SmartSSICore.xcframework/
 mobile/ios/Generated/
 mobile/ios/SmartSSI.xcodeproj/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+mobile/android/local.properties
+mobile/android/app/src/main/jniLibs/
+mobile/android/app/src/main/java/uniffi/

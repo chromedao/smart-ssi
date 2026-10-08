@@ -22,13 +22,14 @@ pub struct GithubProof {
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ProveError {
-    #[error("{message}")]
-    Failed { message: String },
+    // Not `message`: it would clash with Exception.message in the Kotlin bindings.
+    #[error("{reason}")]
+    Failed { reason: String },
 }
 
 impl From<anyhow::Error> for ProveError {
     fn from(error: anyhow::Error) -> Self {
-        ProveError::Failed { message: format!("{error:#}") }
+        ProveError::Failed { reason: format!("{error:#}") }
     }
 }
 
@@ -54,4 +55,46 @@ pub fn prove_github(login: String, notary: String) -> Result<GithubProof, ProveE
         })
     })
     .map_err(Into::into)
+}
+
+// --- Wallet (used by the Android app; iOS uses CryptoKit) ------------------------------------------
+
+/// A new random 32-byte Ed25519 seed. The app stores it encrypted; it never leaves the phone.
+#[uniffi::export]
+pub fn wallet_new_seed() -> Result<Vec<u8>, ProveError> {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).map_err(|e| anyhow::anyhow!("no randomness: {e}"))?;
+    Ok(seed.to_vec())
+}
+
+fn signing_key(seed: &[u8]) -> Result<ed25519_dalek::SigningKey, ProveError> {
+    let seed: [u8; 32] = seed.try_into().map_err(|_| anyhow::anyhow!("seed must be 32 bytes"))?;
+    Ok(ed25519_dalek::SigningKey::from_bytes(&seed))
+}
+
+/// Solana address (base58 public key) of the wallet.
+#[uniffi::export]
+pub fn wallet_address(seed: Vec<u8>) -> Result<String, ProveError> {
+    Ok(bs58::encode(signing_key(&seed)?.verifying_key().as_bytes()).into_string())
+}
+
+/// Ed25519 signature of `message`, as the issuer API expects.
+#[uniffi::export]
+pub fn wallet_sign(seed: Vec<u8>, message: String) -> Result<Vec<u8>, ProveError> {
+    use ed25519_dalek::Signer;
+    Ok(signing_key(&seed)?.sign(message.as_bytes()).to_bytes().to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Cross-check with @solana/kit: SEED_HEX=<32-byte seed> EXPECTED=<address> cargo test
+    #[test]
+    fn address_matches_solana_kit() {
+        let (Ok(seed), Ok(expected)) = (std::env::var("SEED_HEX"), std::env::var("EXPECTED")) else { return };
+        let seed: Vec<u8> = (0..seed.len()).step_by(2).map(|i| u8::from_str_radix(&seed[i..i + 2], 16).unwrap()).collect();
+        assert_eq!(wallet_address(seed.clone()).unwrap(), expected);
+        assert_eq!(wallet_sign(seed, "smart-ssi".into()).unwrap().len(), 64);
+    }
 }
