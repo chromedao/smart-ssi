@@ -25,5 +25,8 @@ xcodebuild -create-xcframework \
   -library "$T/aarch64-apple-ios/release/libsmart_ssi_mobile.a" -headers "$HEADERS" \
   -library "$T/aarch64-apple-ios-sim/release/libsmart_ssi_mobile.a" -headers "$HEADERS" \
   -output ios/SmartSSICore.xcframework
+# Apple team that signs the app. Default: the team publishing the TestFlight builds today;
+# set DEVELOPMENT_TEAM to sign with another team (e.g. a Chrome DAO account).
+export DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-RU6ZU6HVZT}"
 (cd ios && xcodegen generate)
 echo "ios/SmartSSICore.xcframework and ios/SmartSSI.xcodeproj ready"

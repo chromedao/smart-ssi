@@ -169,3 +169,19 @@ Tested: issue then `check` → VALID; `revoke` then `check` → INVALID; a prese
 
 - The notary key is a local file. Production keeps it in a KMS or HSM (see ARCHITECTURE.md).
 - The GitHub request is unauthenticated: it proves public facts about an account, not that you own it. Ownership needs an authenticated request (OAuth token), next.
+
+## License
+
+| Part | License |
+| --- | --- |
+| Prover, verifier, mobile core, iOS and Android apps, scripts, everything not listed below | [Apache-2.0](LICENSE) |
+| Issuer service (`issuer/`) | [AGPL-3.0](issuer/LICENSE): run a modified issuer as a network service, publish your changes |
+
+Why: verifiers and partners can integrate proofs and verification freely (Apache-2.0); the issuer stays open
+when someone runs it as a service (AGPL-3.0). Apache-2.0 also keeps the apps compatible with the app stores.
+The names and logos are not covered by these licenses: see [TRADEMARKS.md](TRADEMARKS.md).
+
+The value Smart-SSI attestations carry does not come from the code: it comes from Chrome DAO's credential on
+the Solana Attestation Service and the keys that sign under it. Anyone can run this code; only Chrome DAO's
+signer issues Smart-SSI attestations.
+

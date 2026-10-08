@@ -2,6 +2,7 @@
 name = "smart-ssi-prover"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 description = "Smart-SSI prototype: prove facts from a real HTTPS API with TLSNotary"
 

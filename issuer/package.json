@@ -1,6 +1,7 @@
 {
   "name": "smart-ssi-issuer",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Smart-SSI prototype issuer: verify a TLSNotary presentation, write the claim to the Solana Attestation Service",
   "scripts": {

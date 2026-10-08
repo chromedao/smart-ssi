@@ -29,7 +29,7 @@ targets:
         SWIFT_VERSION: "5.0"
         OTHER_LDFLAGS: "-lc++"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: RU6ZU6HVZT
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
       configs:
         Debug:
           "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"
