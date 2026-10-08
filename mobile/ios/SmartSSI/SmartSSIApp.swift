@@ -12,25 +12,53 @@ struct SmartSSIApp: App {
     }
 }
 
-private let green = Color(red: 0, green: 1, blue: 0.255)
+/// What the user sees about their account before agreeing to share it, and what the badge holds after.
+struct Facts {
+    var login: String
+    var publicRepos: Int
+    var accountAgeYears: Int
+    var createdAt: Date?
+    var active: Bool
+}
+
+struct Badge {
+    var facts: Facts
+    var verifiedAt: Date?
+    var attestation: String
+    var explorer: URL? { URL(string: "https://explorer.solana.com/address/\(attestation)?cluster=devnet") }
+}
+
+/// The journey, one step at a time: home → GitHub sign-in → proof on the phone → consent → badge.
+enum Stage {
+    case loading
+    case home
+    case signingIn(GitHubLogin.DeviceCode?)
+    case proving
+    case review(GithubProof, Facts)
+    case issuing
+    case badge(Badge)
+    case failed(String)
+}
+
+/// The rule the issuer applies (prover `interpret`), shown to users in plain words.
+let activeRule = "5 or more public repositories, and an account older than 1 year"
 
 @MainActor
-final class ProofModel: ObservableObject {
-    // Development: `-login <name>` at launch prefills the field (simctl launch … -login jeemclr).
-    @Published var login = UserDefaults.standard.string(forKey: "login") ?? ""
+final class BadgeModel: ObservableObject {
+    @Published var stage = Stage.loading
+    @Published var walletAddress = ""
+    @Published var log: [String] = []
+
     // Development: `-notary host:port` and `-issuer url` at launch override the defaults.
     @Published var notary = UserDefaults.standard.string(forKey: "notary") ?? "wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app"
     @Published var issuerURL = UserDefaults.standard.string(forKey: "issuer") ?? "https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app"
-    @Published var walletAddress = ""
-    @Published var deviceCode: GitHubLogin.DeviceCode?
+    // Development: `-login <name>` at launch prefills the public-profile proof.
+    @Published var login = UserDefaults.standard.string(forKey: "login") ?? ""
+
+    private var wallet: Wallet?
     private var signIn: Task<Void, Never>?
     private var browser: ASWebAuthenticationSession?
     private let anchor = WindowAnchor()
-    @Published var busy = false
-    @Published var proof: GithubProof?
-    @Published var log: [String] = []
-
-    private var wallet: Wallet?
 
     init() {
         do {
@@ -38,41 +66,109 @@ final class ProofModel: ObservableObject {
             self.wallet = wallet
             walletAddress = wallet.address
         } catch {
-            note("wallet error: \(error.localizedDescription)")
+            note("wallet error: \(error)")
+        }
+        Task {
+            await refresh()
+            #if DEBUG
+            // Development: `-autoProvePublic YES` runs a public-profile proof at launch (screens without GitHub sign-in).
+            if UserDefaults.standard.bool(forKey: "autoProvePublic") { provePublic() }
+            #endif
         }
     }
 
     func note(_ line: String) { log.insert(line, at: 0) }
 
-    /// Sign in to GitHub, then prove the signed-in account: this proves the user owns it.
-    func proveMine() {
-        busy = true
-        proof = nil
+    // MARK: Badge on Solana
+
+    /// Shows the current badge if the wallet has one, the home screen otherwise.
+    func refresh() async {
+        guard let client else { return stage = .failed("This phone could not create its private key.") }
+        do {
+            let json = try await client.check()
+            note("check: valid=\(json["valid"] ?? "?")")
+            if json["valid"] as? Bool == true, let data = json["data"] as? [String: Any], let attestation = json["attestation"] as? String {
+                stage = .badge(Badge(facts: Self.facts(fromAttestation: data), verifiedAt: Self.date(data["proven_at"]), attestation: attestation))
+            } else {
+                stage = .home
+            }
+        } catch {
+            note("check failed: \(error)")
+            stage = .home
+        }
+    }
+
+    func issue(_ proof: GithubProof) {
+        guard let client else { return }
+        stage = .issuing
+        Task {
+            do {
+                let json = try await client.issue(presentation: proof.presentation)
+                note("issued: \(json["attestation"] ?? "?")")
+                await refresh()
+            } catch {
+                note("issue failed: \(error)")
+                stage = .failed(Self.explain(error))
+            }
+        }
+    }
+
+    func removeBadge() {
+        guard let client else { return }
+        stage = .issuing
+        Task {
+            do {
+                _ = try await client.revoke()
+                note("revoked")
+                stage = .home
+            } catch {
+                note("revoke failed: \(error)")
+                stage = .failed(Self.explain(error))
+            }
+        }
+    }
+
+    private var client: IssuerClient? {
+        guard let wallet, let url = URL(string: issuerURL) else { return nil }
+        return IssuerClient(baseURL: url, wallet: wallet)
+    }
+
+    // MARK: GitHub sign-in and proof
+
+    func start() {
         wakeNotary()
+        stage = .signingIn(nil)
         signIn = Task {
             do {
                 let login = GitHubLogin()
                 let code = try await login.start()
                 UIPasteboard.general.string = code.user_code
-                deviceCode = code
-                note("GitHub code \(code.user_code) (copied)")
-                openGitHub()
+                stage = .signingIn(code)
+                openGitHub(code)
                 let token = try await login.token(for: code)
                 closeGitHub()
-                run("proving your GitHub account through \(notary)…") { try proveGithubOwner(token: token, notary: $0) }
+                prove { try proveGithubOwner(token: token, notary: $0) }
+            } catch is CancellationError {
+                closeGitHub()
+                await refresh()
             } catch {
                 closeGitHub()
-                busy = false
-                note(error is CancellationError ? "sign-in cancelled" : "sign-in failed: \(error.localizedDescription)")
+                note("sign-in failed: \(error)")
+                stage = .failed(Self.explain(error))
             }
         }
+    }
+
+    func cancel() {
+        signIn?.cancel()
+        if case .review = stage { Task { await refresh() } }
     }
 
     /// github.com/login/device in the system sign-in window: it shares Safari's GitHub session, and
     /// password managers work there. The device flow has no redirect, so the app closes it once GitHub
     /// hands over the token; if the user closes it first, it can be reopened.
-    func openGitHub() {
-        guard let code = deviceCode, let url = URL(string: code.verification_uri) else { return }
+    func openGitHub(_ code: GitHubLogin.DeviceCode) {
+        guard let url = URL(string: code.verification_uri) else { return }
         let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "smartssi") { _, _ in }
         session.presentationContextProvider = anchor
         session.prefersEphemeralWebBrowserSession = false
@@ -80,163 +176,95 @@ final class ProofModel: ObservableObject {
         session.start()
     }
 
-    /// The Cloud Run notary scales to zero and takes ~10 s to start. Any request starts an instance, so poke
-    /// it while the user signs in to GitHub (15-20 s): it is warm when the proof begins. The answer is ignored.
-    private func wakeNotary() {
-        guard let url = URL(string: notary.replacingOccurrences(of: "wss://", with: "https://")), url.scheme == "https" else { return }
-        URLSession.shared.dataTask(with: url).resume()
-    }
-
-    func cancelSignIn() { signIn?.cancel() }
-
     private func closeGitHub() {
         browser?.cancel()
         browser = nil
-        deviceCode = nil
     }
 
     /// Development: public facts about any account. The issuer refuses these (no ownership).
     func provePublic() {
         let login = login.trimmingCharacters(in: .whitespaces)
         guard !login.isEmpty else { return note("enter a GitHub login") }
-        busy = true
-        proof = nil
-        run("proving public account \(login) through \(notary)…") { try proveGithubPublic(login: login, notary: $0) }
+        prove { try proveGithubPublic(login: login, notary: $0) }
     }
 
-    private func run(_ message: String, _ prove: @escaping @Sendable (String) throws -> GithubProof) {
+    private func prove(_ run: @escaping @Sendable (String) throws -> GithubProof) {
         let notary = notary
-        note(message)
+        stage = .proving
+        note("proving through \(notary)…")
         Task.detached(priority: .userInitiated) {
-            let result = Result { try prove(notary) }
+            let result = Result { try run(notary) }
             await MainActor.run {
-                self.busy = false
                 switch result {
                 case .success(let proof):
-                    self.proof = proof
                     self.note(String(format: "proof done in %.1f s, %d bytes", proof.seconds, proof.presentation.count))
+                    self.stage = .review(proof, Self.facts(fromProof: proof))
                 case .failure(let error):
                     self.note("proof failed: \(error)")
+                    self.stage = .failed(Self.explain(error))
                 }
             }
         }
     }
 
-    func issuer(_ label: String, _ call: @escaping (IssuerClient) async throws -> [String: Any]) {
-        guard let wallet, let url = URL(string: issuerURL) else { return note("issuer URL or wallet missing") }
-        busy = true
-        Task {
-            defer { busy = false }
-            do {
-                let json = try await call(IssuerClient(baseURL: url, wallet: wallet))
-                note("\(label): \(Self.short(json))")
-            } catch {
-                note("\(label) failed: \(error.localizedDescription)")
+    /// The Cloud Run notary scales to zero. Any request starts an instance, so poke it while the user
+    /// signs in to GitHub: it is warm when the proof begins. The answer is ignored.
+    private func wakeNotary() {
+        guard let url = URL(string: notary.replacingOccurrences(of: "wss://", with: "https://")), url.scheme == "https" else { return }
+        URLSession.shared.dataTask(with: url).resume()
+    }
+
+    // MARK: Reading proofs and attestations
+
+    private static func facts(fromProof proof: GithubProof) -> Facts {
+        let claim = json(proof.claimJson), revealed = json(proof.revealedJson)
+        let data = claim["data"] as? [String: Any] ?? [:]
+        return Facts(
+            login: data["login"] as? String ?? "?",
+            publicRepos: data["public_repos"] as? Int ?? 0,
+            accountAgeYears: data["account_age_years"] as? Int ?? 0,
+            createdAt: date(revealed["created_at"]),
+            active: claim["claim"] as? String == "dev.active"
+        )
+    }
+
+    private static func facts(fromAttestation data: [String: Any]) -> Facts {
+        Facts(
+            login: data["login"] as? String ?? "?",
+            publicRepos: data["public_repos"] as? Int ?? 0,
+            accountAgeYears: data["account_age_years"] as? Int ?? 0,
+            createdAt: nil,
+            active: data["claim"] as? String == "dev.active"
+        )
+    }
+
+    private static func json(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    private static func date(_ value: Any?) -> Date? {
+        guard let text = value as? String else { return nil }
+        return ISO8601DateFormatter().date(from: text)
+    }
+
+    /// Errors in words a user can act on. The technical detail stays in the debug log.
+    static func explain(_ error: Error) -> String {
+        if let failure = error as? GitHubLogin.Failure { return failure.localizedDescription }
+        if let api = error as? IssuerClient.APIError {
+            switch api.status {
+            case 409: return "This proof was already used. Start again to make a new one."
+            case 422 where api.message.contains("too old"): return "The proof expired before it was sent. Start again."
+            case 422 where api.message.contains("ownership"): return "This proof doesn't show that the GitHub account is yours. Sign in to GitHub and try again."
+            case 422: return "Chrome DAO could not verify this proof. Start again; if it keeps failing, tell us on Discord."
+            default: return "Chrome DAO's server did not answer as expected. Try again in a moment."
             }
         }
+        if error is URLError { return "No connection. Check your network and try again." }
+        let text = "\(error)"
+        if text.contains("notary") || text.contains("connect") { return "Could not reach Chrome DAO's notary. Check your network and try again." }
+        if text.contains("GitHub answered") { return "GitHub refused the request. Sign in again." }
+        return "Something went wrong while proving. Try again."
     }
-
-    func requestAttestation() {
-        guard let proof else { return note("prove first") }
-        issuer("attestation") { try await $0.issue(presentation: proof.presentation) }
-    }
-
-    private static func short(_ json: [String: Any]) -> String {
-        let keys = ["claim", "valid", "reason", "revoked", "attestation"]
-        return keys.compactMap { key in json[key].map { "\(key)=\($0)" } }.joined(separator: " ")
-    }
-}
-
-struct ContentView: View {
-    @StateObject private var model = ProofModel()
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("CHROME DAO · SMART-SSI").font(.caption.monospaced()).foregroundStyle(green)
-                Text("Prove what you did.\nReveal nothing else.").font(.title2.monospaced().bold())
-
-                section("WALLET") {
-                    Text(model.walletAddress).font(.caption.monospaced()).textSelection(.enabled)
-                }
-
-                section("GITHUB") {
-                    if let code = model.deviceCode {
-                        Text("Enter this code on GitHub, then authorize Smart-SSI:").font(.caption.monospaced())
-                        Text(code.user_code).font(.title.monospaced().bold()).foregroundStyle(green).textSelection(.enabled)
-                        HStack {
-                            button("OPEN GITHUB", action: model.openGitHub)
-                            button("CANCEL", action: model.cancelSignIn)
-                        }
-                    } else {
-                        button(model.busy ? "PROVING…" : "SIGN IN WITH GITHUB AND PROVE", action: model.proveMine)
-                            .disabled(model.busy)
-                    }
-                    Text("Proves the account you sign in to. Your password and token never leave GitHub and this phone.")
-                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
-                }
-
-                if let proof = model.proof {
-                    section("ISSUER WILL SEE") {
-                        Text(proof.revealedJson).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                    section("CLAIM") {
-                        Text(proof.claimJson).font(.caption.monospaced()).foregroundStyle(green).textSelection(.enabled)
-                        Text(String(format: "%.1f s on device", proof.seconds)).font(.caption2.monospaced()).foregroundStyle(.secondary)
-                    }
-                    button("GET ATTESTATION", action: model.requestAttestation).disabled(model.busy)
-                }
-
-                HStack {
-                    button("CHECK") { model.issuer("check") { try await $0.check() } }
-                    button("REVOKE") { model.issuer("revoke") { try await $0.revoke() } }
-                }
-                .disabled(model.busy)
-
-                // Local servers and public-profile proofs: Xcode builds only, never TestFlight or the App Store.
-                #if DEBUG
-                DisclosureGroup("Development") {
-                    TextField("public GitHub login", text: $model.login)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textFieldStyle(.roundedBorder)
-                    button("PROVE PUBLIC PROFILE (NO OWNERSHIP)", action: model.provePublic)
-                    TextField("notary host:port", text: $model.notary).textFieldStyle(.roundedBorder)
-                    TextField("issuer URL", text: $model.issuerURL).textFieldStyle(.roundedBorder)
-                }
-                .font(.caption.monospaced())
-                .disabled(model.busy)
-                #endif
-
-                section("LOG") {
-                    ForEach(Array(model.log.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.caption2.monospaced()).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding()
-        }
-        .background(Color.black)
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("[\(title)]").font(.caption.monospaced()).foregroundStyle(green)
-            content()
-        }
-    }
-
-    private func button(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.caption.monospaced().bold()).frame(maxWidth: .infinity).padding(.vertical, 12)
-        }
-        .overlay(Rectangle().stroke(green, lineWidth: 1))
-        .foregroundStyle(green)
-    }
-}
-
-extension GitHubLogin.DeviceCode: Identifiable {
-    var id: String { device_code }
 }
 
 /// The window the GitHub sign-in sheet is presented from.
