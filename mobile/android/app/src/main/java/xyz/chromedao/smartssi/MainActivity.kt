@@ -191,9 +191,12 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String, initialNotary: Str
             GreenButton("REVOKE", enabled = !busy, modifier = Modifier.weight(1f)) { issuer("revoke") { it.revoke() } }
         }
 
-        Section("DEVELOPMENT SERVERS") {
-            OutlinedTextField(notary, { notary = it }, label = { Text("notary host:port") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(issuerUrl, { issuerUrl = it }, label = { Text("issuer URL") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
+        // Local servers: debug builds only, never Play testing or the store.
+        if (BuildConfig.DEBUG) {
+            Section("DEVELOPMENT SERVERS") {
+                OutlinedTextField(notary, { notary = it }, label = { Text("notary host:port") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(issuerUrl, { issuerUrl = it }, label = { Text("issuer URL") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
+            }
         }
 
         Section("LOG") { log.forEach { Text(it, color = Color.Gray, fontFamily = Mono, fontSize = 11.sp) } }

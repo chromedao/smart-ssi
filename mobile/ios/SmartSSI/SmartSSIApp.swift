@@ -193,6 +193,8 @@ struct ContentView: View {
                 }
                 .disabled(model.busy)
 
+                // Local servers and public-profile proofs: Xcode builds only, never TestFlight or the App Store.
+                #if DEBUG
                 DisclosureGroup("Development") {
                     TextField("public GitHub login", text: $model.login)
                         .textInputAutocapitalization(.never)
@@ -204,6 +206,7 @@ struct ContentView: View {
                 }
                 .font(.caption.monospaced())
                 .disabled(model.busy)
+                #endif
 
                 section("LOG") {
                     ForEach(Array(model.log.enumerated()), id: \.offset) { _, line in
