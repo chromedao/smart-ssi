@@ -60,7 +60,7 @@ $BIN prove <login> --notary wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app --tru
 PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary-run.sh   # redeploy
 ```
 
-`--notary` takes `host:port` (TCP) or a `ws://` / `wss://` URL; `notary --ws` serves WebSocket on `$PORT`. A proof from a Mac in France takes about 5.5 s through Cloud Run (5.0 s through the VM). The apps use this notary by default.
+`--notary` takes `host:port` (TCP) or a `ws://` / `wss://` URL; `notary --ws` serves WebSocket on `$PORT`. A proof uploads ~25 MB to the notary and downloads ~4.5 MB (MPC-TLS preprocessing; was 62 MB before the limits were sized for GitHub, [#4](https://github.com/chromedao/smart-ssi/issues/4)), so time depends mostly on the uplink: 5.5-10 s from a Mac in France through Cloud Run. The apps use this notary by default.
 
 The first notary ran on a Compute Engine VM over raw TCP ([#7](https://github.com/chromedao/smart-ssi/issues/7)); it was deleted once Cloud Run was measured ([#9](https://github.com/chromedao/smart-ssi/issues/9)). `notary --listen host:port` still serves raw TCP for local use.
 
