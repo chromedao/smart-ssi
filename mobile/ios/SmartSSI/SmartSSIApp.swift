@@ -16,8 +16,9 @@ private let green = Color(red: 0, green: 1, blue: 0.255)
 final class ProofModel: ObservableObject {
     // Development: `-login <name>` at launch prefills the field (simctl launch … -login jeemclr).
     @Published var login = UserDefaults.standard.string(forKey: "login") ?? ""
-    @Published var notary = "127.0.0.1:7047"
-    @Published var issuerURL = "http://127.0.0.1:8787"
+    // Development: `-notary host:port` and `-issuer url` at launch override the defaults.
+    @Published var notary = UserDefaults.standard.string(forKey: "notary") ?? "127.0.0.1:7047"
+    @Published var issuerURL = UserDefaults.standard.string(forKey: "issuer") ?? "http://127.0.0.1:8787"
     @Published var walletAddress = ""
     @Published var busy = false
     @Published var proof: GithubProof?
