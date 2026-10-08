@@ -32,8 +32,8 @@ import { payer } from '@solana/kit-plugin-signer';
 import { fetchSysvarClock } from '@solana/sysvars';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const KEYS = join(ROOT, 'issuer/keys');
-const PROVER_BIN = join(ROOT, 'vendor/tlsn/target/release/smart-ssi-prover');
+const KEYS = process.env.KEYS_DIR ?? join(ROOT, 'issuer/keys');
+const PROVER_BIN = process.env.PROVER_BIN ?? join(ROOT, 'vendor/tlsn/target/release/smart-ssi-prover');
 const NOTARY_KEY = process.env.NOTARY_KEY ?? join(ROOT, 'prover/notary.key');
 
 const CREDENTIAL_NAME = 'SMART-SSI-DEV';
@@ -59,7 +59,14 @@ export const sha256 = (data: Uint8Array | string) => createHash('sha256').update
 
 // --- keys -------------------------------------------------------------------
 
+// On Cloud Run the keys come from Secret Manager as one JSON env var: {"fee-payer":"<seed hex>", ...}.
+const SECRET_KEYS: Record<string, string> | null = process.env.ISSUER_KEYS ? JSON.parse(process.env.ISSUER_KEYS) : null;
+
 export async function key(name: string): Promise<KeyPairSigner> {
+  if (SECRET_KEYS) {
+    if (!SECRET_KEYS[name]) throw new Error(`key ${name} missing from ISSUER_KEYS`);
+    return createKeyPairSignerFromPrivateKeyBytes(Buffer.from(SECRET_KEYS[name], 'hex'));
+  }
   mkdirSync(KEYS, { recursive: true });
   const file = join(KEYS, `${name}.json`);
   if (!existsSync(file)) writeFileSync(file, JSON.stringify({ seed: randomBytes(32).toString('hex') }));

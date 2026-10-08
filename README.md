@@ -60,6 +60,23 @@ NOTARY_PUBKEY=026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068
 
 A proof from a Mac in France through this notary takes about 5 s. Redeploy with `PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary.sh`. Development only: the key is a file on the VM's disk (Cloud KMS later).
 
+## Public issuer API (Cloud Run)
+
+`https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app` ([#8](https://github.com/chromedao/smart-ssi/issues/8)): the issuer API on Cloud Run, same project, trusting the Google Cloud notary. Devnet keys come from Secret Manager (`issuer-keys`), never from the image. Prototype limits: one instance, replay store lost on restart.
+
+```bash
+PROJECT_ID=chromedao-smart-ssi NOTARY_PUBKEY=<notary key> deploy/gcp/deploy-issuer.sh
+```
+
+Tested on an iPhone 12 Pro on mobile data (Wi-Fi off): proof on the phone, attestation issued by Cloud Run (`201`, 3.9 s including verification and the Solana transaction).
+
+### Start and stop the notary between tests
+
+```bash
+deploy/gcp/notary-vm.sh start    # waits until the notary answers
+deploy/gcp/notary-vm.sh stop     # stopped VM: only disk + reserved IP are billed
+```
+
 ## Mobile
 
 The proof logic is a library (`prover/src/lib.rs`), shared by the CLI and, later, the apps and the issuer API. It cross-compiles for `aarch64-apple-ios`, `aarch64-apple-ios-sim` and `aarch64-linux-android` (Android NDK clang as linker).

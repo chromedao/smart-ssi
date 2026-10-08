@@ -21,7 +21,8 @@ const PORT = Number(process.env.PORT ?? 8787);
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_PROOF_AGE_S = 15 * 60;
 const MAX_REVOKE_AGE_S = 5 * 60;
-const USED_PROOFS = join(ROOT, 'issuer/data/used-proofs.json');
+const DATA_DIR = process.env.DATA_DIR ?? join(ROOT, 'issuer/data');
+const USED_PROOFS = join(DATA_DIR, 'used-proofs.json');
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -36,7 +37,7 @@ function usedProofs(): Record<string, string> {
 }
 
 function markUsed(proofRef: string, wallet: Address) {
-  mkdirSync(join(ROOT, 'issuer/data'), { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(USED_PROOFS, JSON.stringify({ ...usedProofs(), [proofRef]: wallet }, null, 2));
 }
 

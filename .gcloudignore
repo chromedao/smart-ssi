@@ -2,7 +2,8 @@ vendor/
 **/target/
 **/out*/
 **/node_modules/
-issuer/
+issuer/keys/
+issuer/data/
 mobile/
 **/*.key
 **/*.log
