@@ -9,16 +9,26 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | Step | What | Status |
 | --- | --- | --- |
 | 1 | TLSNotary official example (notarize, present, verify) runs locally | Done |
-| 2 | Real source: prove facts about a GitHub account from `api.github.com` | Done, notary in-process |
-| 3 | Notary as its own server; issuer writes the claim to the Solana Attestation Service (devnet) | Next |
+| 2 | Real source: prove facts about a GitHub account from `api.github.com` | Done |
+| 3a | Notary as its own TCP server with its own key; the issuer only accepts the trusted notary key | Done |
+| 3b | Proof of ownership: authenticated GitHub request | Next |
+| 3c | Issuer writes the claim to the Solana Attestation Service (devnet) | Next |
 | 4 | Prover on iOS and Android ([#7](https://github.com/chromedao/smart-ssi-paper/issues/7)) | Later |
 
 ## Run
 
 ```bash
 ./scripts/setup.sh
-vendor/tlsn/target/release/smart-ssi-prover <github-login>
+BIN=vendor/tlsn/target/release/smart-ssi-prover
+
+# Terminal 1: the notary (creates notary.key on first run, never commit it)
+$BIN notary --listen 127.0.0.1:7047 --key notary.key
+
+# Terminal 2: prove, and only accept proofs signed by our notary
+$BIN prove <github-login> --notary 127.0.0.1:7047 --trust $($BIN pubkey --key notary.key)
 ```
+
+Without `--notary`, `prove` uses an in-process notary with a fixed development key.
 
 One run does the whole loop in about 2 seconds:
 
@@ -31,5 +41,5 @@ Outputs go to `prover/out/`: `attestation.tlsn`, `secrets.tlsn` (keep private), 
 
 ## Limits of this step
 
-- The notary runs in the same process, with a fixed development key. Not a trust boundary yet.
+- The notary key is a local file. Production keeps it in a KMS or HSM (see ARCHITECTURE.md).
 - The GitHub request is unauthenticated: it proves public facts about an account, not that you own it. Ownership needs an authenticated request (OAuth token), next.
