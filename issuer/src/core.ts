@@ -141,7 +141,10 @@ export function verifyPresentation(presentation: Uint8Array): Claim {
   const file = join(dir, 'presentation.tlsn');
   try {
     writeFileSync(file, presentation);
-    const notaryPubkey = execFileSync(PROVER_BIN, ['pubkey', '--key', NOTARY_KEY], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // NOTARY_PUBKEY trusts a remote notary (e.g. the one on Google Cloud); otherwise derive it from the local key file.
+    const notaryPubkey =
+      process.env.NOTARY_PUBKEY ??
+      execFileSync(PROVER_BIN, ['pubkey', '--key', NOTARY_KEY], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     const output = execFileSync(PROVER_BIN, ['verify', file, '--trust', notaryPubkey], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return JSON.parse(output);
   } catch (error) {

@@ -43,6 +43,23 @@ One run does the whole loop in about 2 seconds:
 
 Outputs go to `prover/out/`: `attestation.tlsn`, `secrets.tlsn` (keep private), `presentation.tlsn`, `claim.json`.
 
+## Public notary (Google Cloud)
+
+A development notary runs on Google Cloud for real-phone tests ([#7](https://github.com/chromedao/smart-ssi/issues/7)):
+
+| | |
+| --- | --- |
+| Address | `35.240.102.52:7047` |
+| Public key (secp256k1) | `026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068` |
+| Where | project `chromedao-smart-ssi`, VM `e2-standard-2`, `europe-west1-b`, image built from `deploy/notary.Dockerfile` |
+
+```bash
+$BIN prove <login> --notary 35.240.102.52:7047 --trust 026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068
+NOTARY_PUBKEY=026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068 npm run issuer -- issue <presentation> --user <wallet>
+```
+
+A proof from a Mac in France through this notary takes about 5 s. Redeploy with `PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary.sh`. Development only: the key is a file on the VM's disk (Cloud KMS later).
+
 ## Mobile
 
 The proof logic is a library (`prover/src/lib.rs`), shared by the CLI and, later, the apps and the issuer API. It cross-compiles for `aarch64-apple-ios`, `aarch64-apple-ios-sim` and `aarch64-linux-android` (Android NDK clang as linker).

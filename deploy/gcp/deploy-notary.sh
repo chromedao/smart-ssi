@@ -35,7 +35,8 @@ gcloud artifacts repositories describe smart-ssi --location="$REGION" >/dev/null
     --description="Smart-SSI images"
 
 step "Build $IMAGE with Cloud Build"
-gcloud builds submit --region="$REGION" --config=- . <<EOF
+BUILD_CONFIG=$(mktemp)
+cat > "$BUILD_CONFIG" <<EOF
 steps:
   - name: gcr.io/cloud-builders/docker
     args: [build, -f, deploy/notary.Dockerfile, -t, $IMAGE, .]
@@ -44,6 +45,8 @@ options:
   machineType: E2_HIGHCPU_8
 timeout: 3600s
 EOF
+gcloud builds submit --region="$REGION" --config="$BUILD_CONFIG" .
+rm -f "$BUILD_CONFIG"
 
 step "Static IP smart-ssi-notary"
 gcloud compute addresses describe "$VM" --region="$REGION" >/dev/null 2>&1 ||
