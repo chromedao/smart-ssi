@@ -4,6 +4,8 @@ Prototype of [Smart-SSI](https://github.com/chromedao/smart-ssi-paper), a Chrome
 
 Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run by us. No external zkTLS provider. See [ARCHITECTURE.md](https://github.com/chromedao/smart-ssi-paper/blob/main/ARCHITECTURE.md).
 
+**Roadmap**: the issues of this repository, one milestone per phase ([Phase 1](https://github.com/chromedao/smart-ssi/milestone/1) to [4](https://github.com/chromedao/smart-ssi/milestone/4)), engineering tasks as sub-issues of each roadmap item. Board: [Smart-SSI project](https://github.com/orgs/chromedao/projects/3).
+
 ## Status
 
 | Step | What | Status |
@@ -43,39 +45,36 @@ One run does the whole loop in about 2 seconds:
 
 Outputs go to `prover/out/`: `attestation.tlsn`, `secrets.tlsn` (keep private), `presentation.tlsn`, `claim.json`.
 
-## Public notary (Google Cloud)
+## Public notary (Cloud Run, WebSocket)
 
-A development notary runs on Google Cloud for real-phone tests ([#7](https://github.com/chromedao/smart-ssi/issues/7)):
+The development notary runs on Cloud Run ([#9](https://github.com/chromedao/smart-ssi/issues/9)). Cloud Run only routes HTTP, so provers reach it over WebSocket; nothing to start or stop, it scales to zero between proofs.
 
 | | |
 | --- | --- |
-| Address | `35.240.102.52:7047` |
-| Public key (secp256k1) | `026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068` |
-| Where | project `chromedao-smart-ssi`, VM `e2-standard-2`, `europe-west1-b`, image built from `deploy/notary.Dockerfile` |
+| Address | `wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app` |
+| Public key (secp256k1) | `02f516f9e6c29d7a2ead25896168f95fd559117f936ad2036a04525b7dac61d572` |
+| Where | project `chromedao-smart-ssi`, `europe-west1`, 2 vCPU / 2 GiB, one proof per instance, key in Secret Manager (`notary-key`) |
 
 ```bash
-$BIN prove <login> --notary 35.240.102.52:7047 --trust 026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068
-NOTARY_PUBKEY=026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068 npm run issuer -- issue <presentation> --user <wallet>
+$BIN prove <login> --notary wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app --trust 02f516f9e6c29d7a2ead25896168f95fd559117f936ad2036a04525b7dac61d572
+PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary-run.sh   # redeploy
 ```
 
-A proof from a Mac in France through this notary takes about 5 s. Redeploy with `PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary.sh`. Development only: the key is a file on the VM's disk (Cloud KMS later).
+`--notary` takes `host:port` (TCP) or a `ws://` / `wss://` URL; `notary --ws` serves WebSocket on `$PORT`. A proof from a Mac in France takes about 5.5 s through Cloud Run (5.0 s through the VM). The apps use this notary by default.
+
+### Compute Engine VM (previous setup)
+
+`35.240.102.52:7047`, key `026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068`, VM `e2-standard-2` (`deploy/gcp/deploy-notary.sh`, `deploy/gcp/notary-vm.sh start|stop`). Stopped. It still runs the pre-#9 protocol: redeploy it before use. Development only: keys are files or secrets today, Cloud KMS later.
 
 ## Public issuer API (Cloud Run)
 
-`https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app` ([#8](https://github.com/chromedao/smart-ssi/issues/8)): the issuer API on Cloud Run, same project, trusting the Google Cloud notary. Devnet keys come from Secret Manager (`issuer-keys`), never from the image. Prototype limits: one instance, replay store lost on restart.
+`https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app` ([#8](https://github.com/chromedao/smart-ssi/issues/8)): the issuer API on Cloud Run, same project, trusting our notaries (`NOTARY_PUBKEY` takes comma-separated keys). Devnet keys come from Secret Manager (`issuer-keys`), never from the image. Prototype limits: one instance, replay store lost on restart.
 
 ```bash
 PROJECT_ID=chromedao-smart-ssi NOTARY_PUBKEY=<notary key> deploy/gcp/deploy-issuer.sh
 ```
 
 Tested on an iPhone 12 Pro on mobile data (Wi-Fi off): proof on the phone, attestation issued by Cloud Run (`201`, 3.9 s including verification and the Solana transaction).
-
-### Start and stop the notary between tests
-
-```bash
-deploy/gcp/notary-vm.sh start    # waits until the notary answers
-deploy/gcp/notary-vm.sh stop     # stopped VM: only disk + reserved IP are billed
-```
 
 ## Mobile
 
@@ -119,9 +118,10 @@ Same flow as iOS. The wallet seed comes from the Rust library (Ed25519, address 
 
 | Where | Time |
 | --- | --- |
-| Mac (CLI) | ~2 s |
+| Mac (CLI), local notary | ~1.3 s |
+| Mac (CLI), Cloud Run notary (WebSocket) | ~5.5 s |
 | iOS simulator (app) | ~1.5 s |
-| **iPhone 12 Pro (app), Google Cloud notary, Wi-Fi** | **5.0 s** |
+| **iPhone 12 Pro (app), VM notary, Wi-Fi** | **5.0 s** |
 | Android emulator, software AES | 144.6 s |
 | Android emulator, `+aes,+sha2` | 59.5 s |
 

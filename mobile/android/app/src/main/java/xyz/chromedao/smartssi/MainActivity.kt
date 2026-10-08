@@ -111,8 +111,8 @@ class MainActivity : ComponentActivity() {
         // Development: `adb shell am start -n <app>/.MainActivity -e login <name>` prefills the login.
         val initialLogin = intent.getStringExtra("login") ?: ""
         // `-e notary host:port -e issuer url` override the development servers (real phones).
-        val notary = intent.getStringExtra("notary") ?: "10.0.2.2:7047"
-        val issuer = intent.getStringExtra("issuer") ?: "http://10.0.2.2:8787"
+        val notary = intent.getStringExtra("notary") ?: "wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app"
+        val issuer = intent.getStringExtra("issuer") ?: "https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app"
         val wallet = runCatching { Wallet(this) }
         setContent { ProofScreen(wallet, initialLogin, notary, issuer) }
     }

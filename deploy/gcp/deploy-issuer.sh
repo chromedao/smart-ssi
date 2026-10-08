@@ -50,7 +50,7 @@ step "Cloud Run service $SERVICE"
 gcloud run deploy "$SERVICE" --image="$IMAGE" --region="$REGION" --allow-unauthenticated \
   --max-instances=1 --memory=1Gi --cpu=1 \
   --set-secrets=ISSUER_KEYS=issuer-keys:latest \
-  --set-env-vars=NOTARY_PUBKEY="$NOTARY_PUBKEY"
+  --set-env-vars="^@^NOTARY_PUBKEY=$NOTARY_PUBKEY"  # ^@^: the key list contains commas
 
 step "Done"
 echo "Issuer API: $(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')"
