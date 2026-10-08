@@ -4,3 +4,4 @@ prover/out/
 .DS_Store
 notary.key
 *.key
+*.log
