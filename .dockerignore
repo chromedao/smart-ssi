@@ -1,0 +1,9 @@
+vendor/
+**/target/
+**/out*/
+**/node_modules/
+issuer/
+mobile/
+**/*.key
+**/*.log
+.git/
