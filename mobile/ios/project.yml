@@ -18,7 +18,7 @@ targets:
       properties:
         CFBundleDisplayName: Smart-SSI
         # Public client ID of the Chrome DAO GitHub OAuth app (device flow enabled). Not a secret.
-        GitHubClientID: ""
+        GitHubClientID: Ov23liCy3XyNiuJAZRsL
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
