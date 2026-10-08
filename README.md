@@ -12,7 +12,7 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 2 | Real source: prove facts about a GitHub account from `api.github.com` | Done |
 | 3a | Notary as its own TCP server with its own key; the issuer only accepts the trusted notary key | Done |
 | 3b | Proof of ownership: authenticated GitHub request ([#2](https://github.com/chromedao/smart-ssi/issues/2)) | Next |
-| 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Code ready, waiting for devnet SOL |
+| 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Done on devnet |
 | 4 | Prover on iOS and Android ([#7](https://github.com/chromedao/smart-ssi-paper/issues/7)) | Later |
 
 ## Run
@@ -51,6 +51,16 @@ npm run issuer -- revoke --user <wallet>
 ```
 
 The issuer never trusts the prover's `claim.json`: it verifies the presentation itself (`smart-ssi-prover verify`) against the trusted notary key. Keys live in `issuer/keys/` and are never committed: fee payer (pays for accounts), credential authority, attestation signer. The fee payer needs devnet SOL ([faucet](https://faucet.solana.com)).
+
+### Live on devnet
+
+| Account | Address |
+| --- | --- |
+| Credential `SMART-SSI-DEV` | [BQCfMZ…Qs7F](https://explorer.solana.com/address/BQCfMZiKjQMQ6yddjkkDRPScpSMG828nQ45poAU9Qs7F?cluster=devnet) |
+| Schema `dev.github_account` v1 | [6oXVnT…f4mi](https://explorer.solana.com/address/6oXVnTQp7BWtgastgtMXQ8GLhMEJN6GifR5LSWG8f4mi?cluster=devnet) |
+| Demo attestation (`dev.not_yet` for `jeemclr`) | [6UEipa…bBb5](https://explorer.solana.com/address/6UEipaNupJtgRg4M7tizyPSqoJAK5LYxJ29b2niTbBb5?cluster=devnet) |
+
+Tested: issue then `check` → VALID; `revoke` then `check` → INVALID; a presentation signed by another notary is refused before anything is written on-chain.
 
 ## Limits of this step
 
