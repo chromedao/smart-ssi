@@ -8,27 +8,257 @@ struct ContentView: View {
     @StateObject private var model = BadgeModel()
 
     var body: some View {
+        TabView(selection: $model.tab) {
+            BadgesTab(model: model)
+                .tabItem { Label("Badges", systemImage: "checkmark.seal") }
+                .tag(Tab.badges)
+            SourcesTab(model: model)
+                .tabItem { Label("Sources", systemImage: "square.grid.2x2") }
+                .tag(Tab.sources)
+            MeTab(model: model)
+                .tabItem { Label("Me", systemImage: "person.crop.circle") }
+                .tag(Tab.me)
+        }
+        .tint(green)
+        .fullScreenCover(isPresented: Binding(get: { model.flow != nil }, set: { if !$0 { model.cancel() } })) {
+            VerifyFlow(model: model)
+        }
+    }
+}
+
+/// Black page with the Chrome DAO header, shared by the tabs.
+private struct Page<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text("CHROME DAO · SMART-SSI").font(.caption.monospaced()).foregroundStyle(green)
-                stage
-                #if DEBUG
-                DevelopmentPanel(model: model)
-                #endif
+                Text(title).font(.largeTitle.monospaced().bold())
+                content
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color.black)
-        .animation(.easeInOut(duration: 0.2), value: stageID)
+    }
+}
+
+// MARK: Badges
+
+private struct BadgesTab: View {
+    @ObservedObject var model: BadgeModel
+
+    var body: some View {
+        Page(title: "Badges") {
+            if !model.loaded {
+                Waiting(title: "", detail: "Looking for your badges on Solana…")
+            } else if let badge = model.badge {
+                BadgeCard(badge: badge)
+                BadgeActions(badge: badge, model: model)
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    Image(systemName: "checkmark.seal").font(.system(size: 44)).foregroundStyle(dim)
+                    Text("No badge yet").font(.title2.monospaced().bold())
+                    Text("A badge proves something about you (that you're a developer, an athlete…) without sharing the account behind it. Apps and DAO votes check it directly.")
+                        .foregroundStyle(dim)
+                    PrimaryButton(title: "GET MY FIRST BADGE") { model.tab = .sources }
+                }
+                .padding(.top, 8)
+            }
+            #if DEBUG
+            DevelopmentPanel(model: model)
+            #endif
+        }
+        .refreshable { await model.refresh() }
+    }
+}
+
+private struct BadgeCard: View {
+    let badge: Badge
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                SourceIcon(domain: badge.facts.sourceDomain, size: 52)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: badge.facts.active ? "checkmark.seal.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 20)).foregroundStyle(badge.facts.active ? green : dim)
+                            .background(Circle().fill(Color.black).padding(2))
+                            .offset(x: 6, y: 6)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(badge.facts.active ? "Active developer" : "GitHub account verified").font(.title3.monospaced().bold())
+                    Text("@\(badge.facts.login) · GitHub").font(.callout.monospaced()).foregroundStyle(dim)
+                }
+            }
+            if !badge.facts.active {
+                Text("Not an active developer yet: that takes \(activeRule). Update your badge once you get there.")
+                    .font(.callout).foregroundStyle(dim)
+            }
+            VStack(spacing: 0) {
+                FactRow(label: "Public repositories", value: "\(badge.facts.publicRepos)")
+                FactRow(label: "Account age", value: badge.facts.accountAgeYears == 1 ? "1 year" : "\(badge.facts.accountAgeYears) years")
+                if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
+            }
+            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(18)
+        .background(card, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(badge.facts.active ? green.opacity(0.6) : .clear, lineWidth: 1))
+    }
+}
+
+private struct BadgeActions: View {
+    let badge: Badge
+    @ObservedObject var model: BadgeModel
+    @State private var confirmRemove = false
+
+    var body: some View {
+        Text("Public on Solana: apps and DAO votes check it directly, without asking Chrome DAO and without seeing your GitHub account.")
+            .font(.callout).foregroundStyle(dim)
+        if let url = badge.explorer {
+            Link(destination: url) { Label("See it on Solana (test network)", systemImage: "arrow.up.right.square") }
+                .font(.callout).tint(green)
+        }
+        PrimaryButton(title: "UPDATE", action: model.start)
+        SecondaryButton(title: model.removing ? "REMOVING…" : "REMOVE") { confirmRemove = true }
+            .disabled(model.removing)
+            .confirmationDialog("Remove your badge?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                Button("Remove", role: .destructive, action: model.removeBadge)
+            } message: {
+                Text("Apps will no longer see you as verified. You can get a new badge at any time.")
+            }
+    }
+}
+
+// MARK: Sources
+
+private struct SourcesTab: View {
+    @ObservedObject var model: BadgeModel
+
+    var body: some View {
+        Page(title: "Sources") {
+            Text("Prove something from an account you already have. Your phone checks it; only the facts listed are shared, after you agree.")
+                .foregroundStyle(dim)
+            ForEach(sources.filter { $0.status == .available }) { source in
+                SourceRow(source: source, verified: model.badge != nil, action: model.start)
+            }
+            Text("COMING NEXT").font(.caption.monospaced()).foregroundStyle(green).padding(.top, 8)
+            Text("Candidates for the next sources. Chrome holders vote on which come first.").font(.callout).foregroundStyle(dim)
+            ForEach(sources.filter { $0.status == .proposed }) { source in
+                SourceRow(source: source, verified: false, action: nil)
+            }
+            Link(destination: suggestSourceURL) { Label("Suggest a source", systemImage: "plus.bubble") }
+                .font(.callout).tint(green).padding(.top, 4)
+        }
+    }
+}
+
+private struct SourceRow: View {
+    let source: Source
+    let verified: Bool
+    let action: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                SourceIcon(domain: source.domain, size: 44)
+                    .opacity(action == nil ? 0.5 : 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(source.name).font(.headline)
+                    Text(source.badge).font(.subheadline.monospaced()).foregroundStyle(action == nil ? dim : green)
+                }
+                Spacer()
+                if action == nil {
+                    Text("SOON").font(.caption2.monospaced()).foregroundStyle(dim)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .overlay(Capsule().stroke(dim.opacity(0.5)))
+                } else if verified {
+                    Label("Verified", systemImage: "checkmark.seal.fill").font(.caption.monospaced()).foregroundStyle(green)
+                }
+            }
+            Text("Shares: " + source.shares.joined(separator: ", ").lowercased() + ".")
+                .font(.caption).foregroundStyle(dim)
+            if let action {
+                PrimaryButton(title: verified ? "UPDATE MY BADGE" : "VERIFY WITH \(source.name.uppercased())", action: action)
+            }
+        }
+        .padding(16)
+        .background(card, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+// MARK: Me
+
+private struct MeTab: View {
+    @ObservedObject var model: BadgeModel
+
+    var body: some View {
+        Page(title: "Me") {
+            InfoBlock(icon: "key", title: "Your private key",
+                      text: "Created on this phone when you first opened the app. It signs your requests and never leaves the phone; there is no recovery phrase to keep. Your badges are tied to it.")
+            Text(model.walletAddress).font(.caption2.monospaced()).foregroundStyle(dim).textSelection(.enabled)
+            InfoBlock(icon: "eye.slash", title: "What Chrome DAO sees",
+                      text: "Only the facts you agree to share on the last screen of a verification. Never your passwords, tokens, email or private data: your phone proves the facts itself, with a notary that co-signs without seeing the content.")
+            InfoBlock(icon: "testtube.2", title: "Test version",
+                      text: "Badges are recorded on Solana's test network while Smart-SSI is in its pilot. They will move to the main network before the public release.")
+            VStack(alignment: .leading, spacing: 12) {
+                Link(destination: whitePaperURL) { Label("White paper", systemImage: "doc.text") }
+                Link(destination: sourceCodeURL) { Label("Open source code", systemImage: "chevron.left.forwardslash.chevron.right") }
+                Link(destination: discordURL) { Label("CHROMES DAO Discord", systemImage: "bubble.left.and.bubble.right") }
+            }
+            .font(.callout).tint(green)
+            Text("Smart-SSI \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))")
+                .font(.caption2.monospaced()).foregroundStyle(dim)
+        }
+    }
+}
+
+private struct InfoBlock: View {
+    let icon: String
+    let title: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon).font(.title3).foregroundStyle(green).frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(text).font(.subheadline).foregroundStyle(dim)
+            }
+        }
+    }
+}
+
+// MARK: Verification (full screen)
+
+private struct VerifyFlow: View {
+    @ObservedObject var model: BadgeModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack {
+                    Text("CHROME DAO · SMART-SSI").font(.caption.monospaced()).foregroundStyle(green)
+                    Spacer()
+                    if case .done = model.flow {} else {
+                        Button { model.cancel() } label: { Image(systemName: "xmark").foregroundStyle(dim) }
+                    }
+                }
+                step
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.black)
+        .preferredColorScheme(.dark)
+        .interactiveDismissDisabled()
     }
 
-    @ViewBuilder private var stage: some View {
-        switch model.stage {
-        case .loading:
-            Waiting(title: "Loading", detail: "Looking for your badge…")
-        case .home:
-            Home(start: model.start, wallet: model.walletAddress)
+    @ViewBuilder private var step: some View {
+        switch model.flow {
         case .signingIn(let code):
             SigningIn(code: code, open: { code.map(model.openGitHub) }, cancel: model.cancel)
         case .proving:
@@ -42,41 +272,25 @@ struct ContentView: View {
         case .issuing:
             Steps(current: 3)
             Waiting(title: "Recording your badge", detail: "Writing it on Solana, where anyone can check it.")
-        case .badge(let badge):
-            BadgeView(badge: badge, update: model.start, remove: model.removeBadge, wallet: model.walletAddress)
+        case .done:
+            Done(badge: model.badge, close: model.finish)
         case .failed(let message):
-            Failed(message: message, retry: { Task { await model.refresh() } })
+            Failed(message: message, retry: model.cancel)
+        case .none:
+            EmptyView()
         }
     }
-
-    private var stageID: String { String(describing: model.stage).prefix(12).description }
 }
 
-// MARK: Screens
-
-private struct Home: View {
-    let start: () -> Void
-    let wallet: String
+private struct Done: View {
+    let badge: Badge?
+    let close: () -> Void
 
     var body: some View {
-        Text("Prove you're a developer.\nShare nothing else.").font(.title.monospaced().bold())
-        Text("Get a Chrome DAO developer badge from your GitHub account. Apps and DAO votes can check it without ever seeing your account.")
-            .foregroundStyle(dim)
-
-        VStack(alignment: .leading, spacing: 16) {
-            StepRow(number: 1, icon: nil, domain: "github.com", title: "Sign in to GitHub",
-                    detail: "On GitHub's own page. Your password stays with GitHub.")
-            StepRow(number: 2, icon: "iphone", domain: nil, title: "Your phone checks your account",
-                    detail: "It keeps everything private except three facts: your username, your number of public repositories, and when your account was created.")
-            StepRow(number: 3, icon: "checkmark.seal", domain: nil, title: "You get your badge",
-                    detail: "You see exactly what is shared before anything is sent. You can remove the badge at any time.")
-        }
-        .padding(16)
-        .background(card, in: RoundedRectangle(cornerRadius: 14))
-
-        PrimaryButton(title: "GET MY DEVELOPER BADGE", action: start)
-        Text("Wi-Fi recommended: the proof sends about 25 MB.").font(.caption).foregroundStyle(dim)
-        WalletNote(address: wallet)
+        Image(systemName: "checkmark.seal.fill").font(.system(size: 56)).foregroundStyle(green)
+        Text("Your badge is ready").font(.title.monospaced().bold())
+        if let badge { BadgeCard(badge: badge) }
+        PrimaryButton(title: "SEE MY BADGES", action: close)
     }
 }
 
@@ -132,60 +346,6 @@ private struct Review: View {
     }
 }
 
-private struct BadgeView: View {
-    let badge: Badge
-    let update: () -> Void
-    let remove: () -> Void
-    let wallet: String
-    @State private var confirmRemove = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                SourceIcon(domain: badge.facts.sourceDomain, size: 52)
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: badge.facts.active ? "checkmark.seal.fill" : "checkmark.circle.fill")
-                            .font(.system(size: 20)).foregroundStyle(badge.facts.active ? green : dim)
-                            .background(Circle().fill(Color.black).padding(2))
-                            .offset(x: 6, y: 6)
-                    }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(badge.facts.active ? "Active developer" : "GitHub account verified").font(.title2.monospaced().bold())
-                    Text("@\(badge.facts.login)").font(.callout.monospaced()).foregroundStyle(dim)
-                }
-            }
-            if !badge.facts.active {
-                Text("Not an active developer yet: that takes \(activeRule). Update your badge once you get there.")
-                    .font(.callout).foregroundStyle(dim)
-            }
-            VStack(spacing: 0) {
-                FactRow(label: "Public repositories", value: "\(badge.facts.publicRepos)")
-                FactRow(label: "Account age", value: badge.facts.accountAgeYears == 1 ? "1 year" : "\(badge.facts.accountAgeYears) years")
-                if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
-            }
-            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
-        }
-        .padding(18)
-        .background(card, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(badge.facts.active ? green.opacity(0.6) : .clear, lineWidth: 1))
-
-        Text("Your badge is public on Solana: apps and DAO votes check it directly, without asking Chrome DAO and without seeing your GitHub account.")
-            .font(.callout).foregroundStyle(dim)
-        if let url = badge.explorer {
-            Link(destination: url) { Label("See it on Solana (test network)", systemImage: "arrow.up.right.square") }
-                .font(.callout).tint(green)
-        }
-        PrimaryButton(title: "UPDATE MY BADGE", action: update)
-        SecondaryButton(title: "REMOVE MY BADGE") { confirmRemove = true }
-            .confirmationDialog("Remove your badge?", isPresented: $confirmRemove, titleVisibility: .visible) {
-                Button("Remove", role: .destructive, action: remove)
-            } message: {
-                Text("Apps will no longer see you as verified. You can get a new badge at any time.")
-            }
-        WalletNote(address: wallet)
-    }
-}
-
 private struct Failed: View {
     let message: String
     let retry: () -> Void
@@ -194,7 +354,7 @@ private struct Failed: View {
         Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundStyle(.yellow)
         Text("That didn't work").font(.title2.monospaced().bold())
         Text(message).foregroundStyle(dim)
-        PrimaryButton(title: "BACK", action: retry)
+        PrimaryButton(title: "CLOSE", action: retry)
     }
 }
 
@@ -211,27 +371,6 @@ private struct Steps: View {
                     Capsule().fill(step <= current ? green : Color.white.opacity(0.15)).frame(height: 3)
                     Text(names[step - 1]).font(.caption2.monospaced()).foregroundStyle(step == current ? green : dim)
                 }
-            }
-        }
-    }
-}
-
-private struct StepRow: View {
-    let number: Int
-    var icon: String?
-    var domain: String?
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Group {
-                if let domain { SourceIcon(domain: domain, size: 26) } else { Image(systemName: icon ?? "circle").font(.title3).foregroundStyle(green) }
-            }
-            .frame(width: 28)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(number). \(title)").font(.headline)
-                Text(detail).font(.subheadline).foregroundStyle(dim)
             }
         }
     }
@@ -303,21 +442,6 @@ private struct Waiting: View {
             Text(detail).foregroundStyle(dim)
         }
         .padding(.vertical, 8)
-    }
-}
-
-private struct WalletNote: View {
-    let address: String
-
-    var body: some View {
-        DisclosureGroup {
-            Text("A private key was created on this phone when you opened the app. It signs your requests and never leaves the phone; there is no recovery phrase to keep.")
-                .font(.caption).foregroundStyle(dim)
-            Text(address).font(.caption2.monospaced()).foregroundStyle(dim).textSelection(.enabled)
-        } label: {
-            Text("Your private key").font(.caption).foregroundStyle(dim)
-        }
-        .tint(dim)
     }
 }
 

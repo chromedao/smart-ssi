@@ -36,24 +36,30 @@ struct Badge {
     var explorer: URL? { URL(string: "https://explorer.solana.com/address/\(attestation)?cluster=devnet") }
 }
 
-/// The journey, one step at a time: home → GitHub sign-in → proof on the phone → consent → badge.
-enum Stage {
-    case loading
-    case home
+/// A verification, one step at a time: GitHub sign-in → proof on the phone → consent → recorded.
+enum Flow {
     case signingIn(GitHubLogin.DeviceCode?)
     case proving
     case review(GithubProof, Facts)
     case issuing
-    case badge(Badge)
+    case done
     case failed(String)
 }
+
+enum Tab: Hashable { case badges, sources, me }
 
 /// The rule the issuer applies (prover `interpret`), shown to users in plain words.
 let activeRule = "5 or more public repositories, and an account older than 1 year"
 
 @MainActor
 final class BadgeModel: ObservableObject {
-    @Published var stage = Stage.loading
+    /// The wallet's badge on Solana; `loaded` turns true after the first check.
+    @Published var badge: Badge?
+    @Published var loaded = false
+    @Published var removing = false
+    /// The verification in progress, shown full screen; nil when none.
+    @Published var flow: Flow?
+    @Published var tab = Tab.badges
     @Published var walletAddress = ""
     @Published var log: [String] = []
 
@@ -83,7 +89,7 @@ final class BadgeModel: ObservableObject {
             if UserDefaults.standard.bool(forKey: "autoProvePublic") { provePublic() }
             // `-previewBadge YES` shows a sample badge (design work; nothing is issued).
             if UserDefaults.standard.bool(forKey: "previewBadge") {
-                stage = .badge(Badge(facts: Facts(login: "octocat", publicRepos: 8, accountAgeYears: 15, active: true),
+                badge = (Badge(facts: Facts(login: "octocat", publicRepos: 8, accountAgeYears: 15, active: true),
                                      verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"))
             }
             #endif
@@ -94,49 +100,56 @@ final class BadgeModel: ObservableObject {
 
     // MARK: Badge on Solana
 
-    /// Shows the current badge if the wallet has one, the home screen otherwise.
+    /// Reads the wallet's badge from Solana (through the issuer API's public check).
     func refresh() async {
-        guard let client else { return stage = .failed("This phone could not create its private key.") }
+        guard let client else { loaded = true; return note("no wallet") }
         do {
             let json = try await client.check()
             note("check: valid=\(json["valid"] ?? "?")")
             if json["valid"] as? Bool == true, let data = json["data"] as? [String: Any], let attestation = json["attestation"] as? String {
-                stage = .badge(Badge(facts: Self.facts(fromAttestation: data), verifiedAt: Self.date(data["proven_at"]), attestation: attestation))
+                badge = Badge(facts: Self.facts(fromAttestation: data), verifiedAt: Self.date(data["proven_at"]), attestation: attestation)
             } else {
-                stage = .home
+                badge = nil
             }
         } catch {
             note("check failed: \(error)")
-            stage = .home
         }
+        loaded = true
     }
 
     func issue(_ proof: GithubProof) {
         guard let client else { return }
-        stage = .issuing
+        flow = .issuing
         Task {
             do {
                 let json = try await client.issue(presentation: proof.presentation)
                 note("issued: \(json["attestation"] ?? "?")")
                 await refresh()
+                flow = .done
             } catch {
                 note("issue failed: \(error)")
-                stage = .failed(Self.explain(error))
+                flow = .failed(Self.explain(error))
             }
         }
     }
 
+    /// Closes the verification screen; after a new badge, shows it.
+    func finish() {
+        if case .done = flow { tab = .badges }
+        flow = nil
+    }
+
     func removeBadge() {
         guard let client else { return }
-        stage = .issuing
+        removing = true
         Task {
+            defer { removing = false }
             do {
                 _ = try await client.revoke()
                 note("revoked")
-                stage = .home
+                badge = nil
             } catch {
                 note("revoke failed: \(error)")
-                stage = .failed(Self.explain(error))
             }
         }
     }
@@ -150,31 +163,31 @@ final class BadgeModel: ObservableObject {
 
     func start() {
         wakeNotary()
-        stage = .signingIn(nil)
+        flow = .signingIn(nil)
         signIn = Task {
             do {
                 let login = GitHubLogin()
                 let code = try await login.start()
                 UIPasteboard.general.string = code.user_code
-                stage = .signingIn(code)
+                flow = .signingIn(code)
                 openGitHub(code)
                 let token = try await login.token(for: code)
                 closeGitHub()
                 prove { try proveGithubOwner(token: token, notary: $0) }
             } catch is CancellationError {
                 closeGitHub()
-                await refresh()
+                flow = nil
             } catch {
                 closeGitHub()
                 note("sign-in failed: \(error)")
-                stage = .failed(Self.explain(error))
+                flow = .failed(Self.explain(error))
             }
         }
     }
 
     func cancel() {
         signIn?.cancel()
-        if case .review = stage { Task { await refresh() } }
+        flow = nil
     }
 
     /// github.com/login/device in the system sign-in window: it shares Safari's GitHub session, and
@@ -203,7 +216,7 @@ final class BadgeModel: ObservableObject {
 
     private func prove(_ run: @escaping @Sendable (String) throws -> GithubProof) {
         let notary = notary
-        stage = .proving
+        flow = .proving
         note("proving through \(notary)…")
         Task.detached(priority: .userInitiated) {
             let result = Result { try run(notary) }
@@ -211,10 +224,12 @@ final class BadgeModel: ObservableObject {
                 switch result {
                 case .success(let proof):
                     self.note(String(format: "proof done in %.1f s, %d bytes", proof.seconds, proof.presentation.count))
-                    self.stage = .review(proof, Self.facts(fromProof: proof))
+                    // Cancelled while proving: drop the proof.
+                    guard self.flow != nil else { return }
+                    self.flow = .review(proof, Self.facts(fromProof: proof))
                 case .failure(let error):
                     self.note("proof failed: \(error)")
-                    self.stage = .failed(Self.explain(error))
+                    if self.flow != nil { self.flow = .failed(Self.explain(error)) }
                 }
             }
         }
