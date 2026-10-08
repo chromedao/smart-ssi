@@ -127,13 +127,14 @@ pub async fn serve_notary_ws(listen: &str, key_path: &Path) -> Result<()> {
                     use tokio::io::AsyncWriteExt as _;
                     socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n").await?;
                     socket.shutdown().await?;
-                    return Ok(());
+                    return Ok(false);
                 }
                 let ws = async_tungstenite::tokio::accept_async(socket).await?;
-                notary_io(ws_stream_tungstenite::WsStream::new(ws), key).await
+                notary_io(ws_stream_tungstenite::WsStream::new(ws), key).await.map(|()| true)
             };
             match result.await {
-                Ok(()) => info!("signed an attestation for {peer} (websocket)"),
+                Ok(true) => info!("signed an attestation for {peer} (websocket)"),
+                Ok(false) => {}
                 Err(error) => tracing::warn!("websocket session with {peer} failed: {error:#}"),
             }
         });
@@ -403,6 +404,11 @@ pub fn present(attestation: &Attestation, secrets: &Secrets) -> Result<Presentat
     // badge shows (no repository names), and the verifier checks it is exactly DEVELOPER_QUERY.
     if request.request.target.as_str() == "/graphql" {
         builder.reveal_sent(request.body.as_ref().context("request has no body")?)?;
+        // GitHub's API headers carry nothing personal (request id, rate limits); the verifier needs them to
+        // find the body and see whether it is chunked.
+        for header in &response.headers {
+            builder.reveal_recv(header)?;
+        }
         builder.reveal_recv(body)?;
         let provider = CryptoProvider::default();
         let mut presentation = attestation.presentation_builder(&provider);

@@ -293,8 +293,8 @@ private struct VerifyFlow: View {
             Waiting(title: "Recording your badge", detail: "Writing it on Solana, where anyone can check it.")
         case .done:
             Done(badge: model.badge, close: model.finish)
-        case .failed(let message):
-            Failed(message: message, retry: model.cancel)
+        case .failed(let message, let detail):
+            Failed(message: message, detail: detail, retry: model.cancel)
         case .none:
             EmptyView()
         }
@@ -380,12 +380,20 @@ private struct Review: View {
 
 private struct Failed: View {
     let message: String
+    var detail = ""
     let retry: () -> Void
 
     var body: some View {
         Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundStyle(.yellow)
         Text("That didn't work").font(.title2.monospaced().bold())
         Text(message).foregroundStyle(dim)
+        if !detail.isEmpty {
+            DisclosureGroup("Details") {
+                Text(detail).font(.caption2.monospaced()).foregroundStyle(dim).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption).tint(dim)
+        }
         PrimaryButton(title: "CLOSE", action: retry)
     }
 }

@@ -50,7 +50,8 @@ enum Flow {
     case review(GithubProof, Facts)
     case issuing
     case done
-    case failed(String)
+    /// What to tell the user, and the technical cause (shown under Details, for bug reports).
+    case failed(String, String)
 }
 
 enum Tab: Hashable { case badges, sources, me }
@@ -140,7 +141,7 @@ final class BadgeModel: ObservableObject {
                 flow = .done
             } catch {
                 note("issue failed: \(error)")
-                flow = .failed(Self.explain(error))
+                flow = .failed(Self.explain(error), "\(error)")
             }
         }
     }
@@ -203,7 +204,7 @@ final class BadgeModel: ObservableObject {
             } catch {
                 closeGitHub()
                 note("sign-in failed: \(error)")
-                flow = .failed(Self.explain(error))
+                flow = .failed(Self.explain(error), "\(error)")
             }
         }
     }
@@ -252,7 +253,7 @@ final class BadgeModel: ObservableObject {
                     self.flow = .review(proof, Self.facts(fromProof: proof))
                 case .failure(let error):
                     self.note("proof failed: \(error)")
-                    if self.flow != nil { self.flow = .failed(Self.explain(error)) }
+                    if self.flow != nil { self.flow = .failed(Self.explain(error), "\(error)") }
                 }
             }
         }

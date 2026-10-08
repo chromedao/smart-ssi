@@ -122,7 +122,10 @@ async fn prove(subject: &Subject, address: Option<String>, trust: Option<String>
 
     let presentation = present(&attestation, &secrets)?;
     write(out, "presentation.tlsn", &presentation).await?;
-    println!("2/4 presented: only {} revealed", REVEALED_FIELDS.join(", "));
+    match subject {
+        Subject::Owner { .. } => println!("2/4 presented: the developer query and GitHub's answer revealed, the token hidden"),
+        Subject::Public { .. } => println!("2/4 presented: only {} revealed", REVEALED_FIELDS.join(", ")),
+    }
 
     let revealed = verify(&presentation, trust.as_deref())?;
     println!("3/4 verified: {}", serde_json::to_string(&revealed)?);
