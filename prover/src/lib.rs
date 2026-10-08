@@ -93,9 +93,17 @@ pub async fn serve_notary_ws(listen: &str, key_path: &Path) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(listen).await?;
     println!("notary listening on ws://{listen}, public key {}", public_key_hex(&key)?);
     loop {
-        let (socket, peer) = listener.accept().await?;
+        let (mut socket, peer) = listener.accept().await?;
         tokio::spawn(async move {
             let result = async {
+                // Plain HTTP (health checks, the apps' wake-up call) gets a 200 instead of a failed handshake,
+                // which Cloud Run would count as a broken instance.
+                if !is_websocket_upgrade(&socket).await {
+                    use tokio::io::AsyncWriteExt as _;
+                    socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n").await?;
+                    socket.shutdown().await?;
+                    return Ok(());
+                }
                 let ws = async_tungstenite::tokio::accept_async(socket).await?;
                 notary_io(ws_stream_tungstenite::WsStream::new(ws), key).await
             };
@@ -105,6 +113,23 @@ pub async fn serve_notary_ws(listen: &str, key_path: &Path) -> Result<()> {
             }
         });
     }
+}
+
+/// Looks at the request headers without consuming them: is this a WebSocket upgrade?
+async fn is_websocket_upgrade(socket: &tokio::net::TcpStream) -> bool {
+    let mut buffer = [0u8; 4096];
+    for _ in 0..50 {
+        let Ok(n) = socket.peek(&mut buffer).await else { return false };
+        let head = String::from_utf8_lossy(&buffer[..n]).to_ascii_lowercase();
+        if head.contains("\r\n\r\n") || n == buffer.len() {
+            return head.contains("upgrade: websocket");
+        }
+        if n == 0 {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
 }
 
 /// Development key store: 32 random bytes in a file. Production uses a KMS (see ARCHITECTURE.md).
