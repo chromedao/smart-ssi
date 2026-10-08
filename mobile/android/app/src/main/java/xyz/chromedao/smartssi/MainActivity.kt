@@ -110,16 +110,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Development: `adb shell am start -n <app>/.MainActivity -e login <name>` prefills the login.
         val initialLogin = intent.getStringExtra("login") ?: ""
+        // `-e notary host:port -e issuer url` override the development servers (real phones).
+        val notary = intent.getStringExtra("notary") ?: "10.0.2.2:7047"
+        val issuer = intent.getStringExtra("issuer") ?: "http://10.0.2.2:8787"
         val wallet = runCatching { Wallet(this) }
-        setContent { ProofScreen(wallet, initialLogin) }
+        setContent { ProofScreen(wallet, initialLogin, notary, issuer) }
     }
 }
 
 @Composable
-fun ProofScreen(wallet: Result<Wallet>, initialLogin: String) {
+fun ProofScreen(wallet: Result<Wallet>, initialLogin: String, initialNotary: String, initialIssuer: String) {
     var login by remember { mutableStateOf(initialLogin) }
-    var notary by remember { mutableStateOf("10.0.2.2:7047") }
-    var issuerUrl by remember { mutableStateOf("http://10.0.2.2:8787") }
+    var notary by remember { mutableStateOf(initialNotary) }
+    var issuerUrl by remember { mutableStateOf(initialIssuer) }
     var busy by remember { mutableStateOf(false) }
     var proof by remember { mutableStateOf<GithubProof?>(null) }
     val log = remember { mutableStateListOf<String>() }
