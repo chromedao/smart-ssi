@@ -5,3 +5,5 @@ prover/out/
 notary.key
 *.key
 *.log
+issuer/keys/
+node_modules/

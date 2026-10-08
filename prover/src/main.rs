@@ -74,6 +74,14 @@ enum Command {
         #[arg(long, default_value = "notary.key")]
         key: PathBuf,
     },
+    /// Issuer side: verify a presentation and print the claim it supports, as JSON.
+    Verify {
+        /// Presentation file produced by `prove`.
+        presentation: PathBuf,
+        /// Notary public key (hex) to accept.
+        #[arg(long)]
+        trust: String,
+    },
     /// Prove facts about a GitHub account.
     Prove {
         /// GitHub login to prove facts about.
@@ -92,7 +100,11 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    // Logs go to stderr so stdout stays clean JSON for `verify`.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
     match Cli::parse().command {
         Command::Notary { listen, key } => serve_notary(&listen, &key).await,
         Command::Pubkey { key } => {
@@ -100,6 +112,12 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Prove { login, notary: address, trust, out } => prove(&login, address, trust, &out).await,
+        Command::Verify { presentation, trust } => {
+            let presentation: Presentation = bincode::deserialize(&std::fs::read(&presentation)?)?;
+            let claim = interpret(&verify(&presentation, Some(&trust))?)?;
+            println!("{}", serde_json::to_string(&claim)?);
+            Ok(())
+        }
     }
 }
 
@@ -371,7 +389,7 @@ fn verify(presentation: &Presentation, trusted: Option<&str>) -> Result<Value> {
     let received = String::from_utf8_lossy(transcript.received_unsafe());
     let shown = transcript.received_unsafe().iter().filter(|b| **b != 0).count();
     info!("issuer sees {shown} of {} received bytes", transcript.received_unsafe().len());
-    info!("issuer view: {}", received.replace('\0', "·"));
+    tracing::debug!("issuer view: {}", received.replace('\0', "·"));
 
     // Pull each revealed `"field":value` pair out of the partially hidden response.
     let mut fields = serde_json::Map::new();

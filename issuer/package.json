@@ -1,0 +1,21 @@
+{
+  "name": "smart-ssi-issuer",
+  "private": true,
+  "type": "module",
+  "description": "Smart-SSI prototype issuer: verify a TLSNotary presentation, write the claim to the Solana Attestation Service",
+  "scripts": {
+    "issuer": "tsx src/issuer.ts"
+  },
+  "dependencies": {
+    "@solana/attestation": "^2.1.0",
+    "@solana/kit": "^8.4.0",
+    "@solana/kit-plugin-rpc": "^0.18.0",
+    "@solana/kit-plugin-signer": "^0.18.0",
+    "@solana/sysvars": "^8.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
