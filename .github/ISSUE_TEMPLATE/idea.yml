@@ -1,0 +1,26 @@
+name: Idea
+description: A source, a claim, a use case or a change you want in Smart-SSI.
+title: "[Idea] "
+labels: ["enhancement", "later"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas land in **Later** until the DAO picks them up. Not a promise.
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      placeholder: Prove regular climbing from a climbing gym app.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Who would verify it, and why it matters
+    validations:
+      required: false
+  - type: input
+    id: discord
+    attributes:
+      label: Discord name (optional)
