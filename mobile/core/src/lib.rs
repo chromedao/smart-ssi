@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use smart_ssi_prover::{interpret, notarize_via, present, verify};
+use smart_ssi_prover::{Subject, interpret, notarize_via, present, verify};
 
 uniffi::setup_scaffolding!();
 
@@ -33,13 +33,24 @@ impl From<anyhow::Error> for ProveError {
     }
 }
 
-/// Prove facts about a GitHub account through the notary at `notary` (host:port for TCP, or a ws:// / wss:// URL).
+/// Prove the GitHub account the OAuth `token` belongs to (proof of ownership), through the notary at
+/// `notary` (host:port for TCP, or a ws:// / wss:// URL). The token never leaves the MPC-TLS session.
 #[uniffi::export]
-pub fn prove_github(login: String, notary: String) -> Result<GithubProof, ProveError> {
+pub fn prove_github_owner(token: String, notary: String) -> Result<GithubProof, ProveError> {
+    prove(Subject::Owner { token }, notary)
+}
+
+/// Prove public facts about any GitHub account (development only: does not prove ownership).
+#[uniffi::export]
+pub fn prove_github_public(login: String, notary: String) -> Result<GithubProof, ProveError> {
+    prove(Subject::Public { login }, notary)
+}
+
+fn prove(subject: Subject, notary: String) -> Result<GithubProof, ProveError> {
     let start = Instant::now();
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(anyhow::Error::from)?;
     runtime.block_on(async {
-        let (attestation, secrets) = notarize_via(&notary, &login).await?;
+        let (attestation, secrets) = notarize_via(&notary, &subject).await?;
         let presentation = present(&attestation, &secrets)?;
         // The app checks its own proof before sending it; the issuer checks it again against the trusted key.
         let revealed = verify(&presentation, None)?;

@@ -9,7 +9,7 @@ use tracing::info;
 
 use smart_ssi_prover::{
     DEV_NOTARY_KEY, REVEALED_FIELDS, interpret, load_or_create_key, notarize, notarize_via, notary, present,
-    public_key_hex, serve_notary, serve_notary_ws, verify,
+    public_key_hex, serve_notary, serve_notary_ws, verify, Subject,
 };
 
 #[derive(Parser, Debug)]
@@ -48,8 +48,9 @@ enum Command {
     },
     /// Prove facts about a GitHub account.
     Prove {
-        /// GitHub login to prove facts about.
-        login: String,
+        /// Public account to prove facts about (development: does not prove ownership).
+        /// Without it, proves the account of the OAuth token in $GITHUB_TOKEN.
+        login: Option<String>,
         /// Notary address: host:port (TCP) or ws:// / wss:// URL. Without it, an in-process notary with a development key is used.
         #[arg(long)]
         notary: Option<String>,
@@ -79,7 +80,17 @@ async fn main() -> Result<()> {
             println!("{}", public_key_hex(&load_or_create_key(&key)?)?);
             Ok(())
         }
-        Command::Prove { login, notary: address, trust, out } => prove(&login, address, trust, &out).await,
+        Command::Prove { login, notary: address, trust, out } => {
+            let subject = match login {
+                Some(login) => Subject::Public { login },
+                // From the environment only: never on the command line, where shells and `ps` would keep it.
+                None => Subject::Owner {
+                    token: std::env::var("GITHUB_TOKEN")
+                        .map_err(|_| anyhow::anyhow!("give a login, or set GITHUB_TOKEN to prove your own account"))?,
+                },
+            };
+            prove(&subject, address, trust, &out).await
+        }
         Command::Verify { presentation, trust } => {
             let presentation: Presentation = bincode::deserialize(&std::fs::read(&presentation)?)?;
             let claim = interpret(&verify(&presentation, Some(&trust))?)?;
@@ -89,18 +100,18 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn prove(login: &str, address: Option<String>, trust: Option<String>, out: &Path) -> Result<()> {
+async fn prove(subject: &Subject, address: Option<String>, trust: Option<String>, out: &Path) -> Result<()> {
     tokio::fs::create_dir_all(out).await?;
 
     let (attestation, secrets) = match address {
         Some(address) => {
             info!("notarizing with the notary at {address}");
-            notarize_via(&address, login).await?
+            notarize_via(&address, subject).await?
         }
         None => {
             let (notary_socket, prover_socket) = tokio::io::duplex(1 << 23);
             let notary_task = tokio::spawn(notary(notary_socket, DEV_NOTARY_KEY));
-            let result = notarize(prover_socket, login).await?;
+            let result = notarize(prover_socket, subject).await?;
             notary_task.await??;
             result
         }

@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import uniffi.smart_ssi_mobile.GithubProof
-import uniffi.smart_ssi_mobile.proveGithub
+import uniffi.smart_ssi_mobile.proveGithubPublic
 import uniffi.smart_ssi_mobile.walletAddress
 import uniffi.smart_ssi_mobile.walletNewSeed
 import uniffi.smart_ssi_mobile.walletSign
@@ -163,7 +163,7 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String, initialNotary: Str
                 proof = null
                 note("proving $login through $notary…")
                 scope.launch {
-                    val result = withContext(Dispatchers.Default) { runCatching { proveGithub(login.trim(), notary) } }
+                    val result = withContext(Dispatchers.Default) { runCatching { proveGithubPublic(login.trim(), notary) } }
                     busy = false
                     result.fold(
                         {

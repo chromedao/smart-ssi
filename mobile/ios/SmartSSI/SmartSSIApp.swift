@@ -1,4 +1,6 @@
+import SafariServices
 import SwiftUI
+import UIKit
 
 @main
 struct SmartSSIApp: App {
@@ -20,6 +22,7 @@ final class ProofModel: ObservableObject {
     @Published var notary = UserDefaults.standard.string(forKey: "notary") ?? "wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app"
     @Published var issuerURL = UserDefaults.standard.string(forKey: "issuer") ?? "https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app"
     @Published var walletAddress = ""
+    @Published var deviceCode: GitHubLogin.DeviceCode?
     @Published var busy = false
     @Published var proof: GithubProof?
     @Published var log: [String] = []
@@ -38,14 +41,42 @@ final class ProofModel: ObservableObject {
 
     func note(_ line: String) { log.insert(line, at: 0) }
 
-    func prove() {
-        let login = login.trimmingCharacters(in: .whitespaces), notary = notary
+    /// Sign in to GitHub, then prove the signed-in account: this proves the user owns it.
+    func proveMine() {
+        busy = true
+        proof = nil
+        Task {
+            do {
+                let login = GitHubLogin()
+                let code = try await login.start()
+                UIPasteboard.general.string = code.user_code
+                deviceCode = code
+                note("GitHub code \(code.user_code) (copied)")
+                let token = try await login.token(for: code)
+                deviceCode = nil
+                run("proving your GitHub account through \(notary)…") { try proveGithubOwner(token: token, notary: $0) }
+            } catch {
+                deviceCode = nil
+                busy = false
+                note("sign-in failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Development: public facts about any account. The issuer refuses these (no ownership).
+    func provePublic() {
+        let login = login.trimmingCharacters(in: .whitespaces)
         guard !login.isEmpty else { return note("enter a GitHub login") }
         busy = true
         proof = nil
-        note("proving \(login) through \(notary)…")
+        run("proving public account \(login) through \(notary)…") { try proveGithubPublic(login: login, notary: $0) }
+    }
+
+    private func run(_ message: String, _ prove: @escaping @Sendable (String) throws -> GithubProof) {
+        let notary = notary
+        note(message)
         Task.detached(priority: .userInitiated) {
-            let result = Result { try proveGithub(login: login, notary: notary) }
+            let result = Result { try prove(notary) }
             await MainActor.run {
                 self.busy = false
                 switch result {
@@ -98,11 +129,9 @@ struct ContentView: View {
                 }
 
                 section("GITHUB") {
-                    TextField("login", text: $model.login)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textFieldStyle(.roundedBorder)
-                    button(model.busy ? "PROVING…" : "PROVE ON THIS PHONE", action: model.prove)
+                    button(model.busy ? "PROVING…" : "SIGN IN WITH GITHUB AND PROVE", action: model.proveMine)
+                    Text("Proves the account you sign in to. Your password and token never leave GitHub and this phone.")
+                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
                 }
 
                 if let proof = model.proof {
@@ -121,7 +150,12 @@ struct ContentView: View {
                     button("REVOKE") { model.issuer("revoke") { try await $0.revoke() } }
                 }
 
-                DisclosureGroup("Development servers") {
+                DisclosureGroup("Development") {
+                    TextField("public GitHub login", text: $model.login)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                    button("PROVE PUBLIC PROFILE (NO OWNERSHIP)", action: model.provePublic)
                     TextField("notary host:port", text: $model.notary).textFieldStyle(.roundedBorder)
                     TextField("issuer URL", text: $model.issuerURL).textFieldStyle(.roundedBorder)
                 }
@@ -137,6 +171,17 @@ struct ContentView: View {
         }
         .background(Color.black)
         .disabled(model.busy)
+        .sheet(item: $model.deviceCode) { code in
+            VStack(spacing: 12) {
+                Text("Enter this code on GitHub").font(.caption.monospaced())
+                Text(code.user_code).font(.title.monospaced().bold()).foregroundStyle(green).textSelection(.enabled)
+                Text("Copied. Paste it below, then approve.").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                SafariView(url: URL(string: code.verification_uri)!)
+            }
+            .padding(.top)
+            .background(Color.black)
+            .interactiveDismissDisabled()
+        }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -153,4 +198,15 @@ struct ContentView: View {
         .overlay(Rectangle().stroke(green, lineWidth: 1))
         .foregroundStyle(green)
     }
+}
+
+extension GitHubLogin.DeviceCode: Identifiable {
+    var id: String { device_code }
+}
+
+/// github.com in an in-app Safari sheet: password managers and autofill work there.
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
 }

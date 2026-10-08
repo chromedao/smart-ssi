@@ -1,7 +1,8 @@
 //! Smart-SSI prover library: prove facts about a GitHub account from the real GitHub API.
 //!
 //! Shared by the CLI, the issuer API and the mobile apps. The full loop:
-//! 1. Notarize: the prover fetches `api.github.com/users/<login>` over MPC-TLS with a notary.
+//! 1. Notarize: the prover fetches `api.github.com/user` with the user's OAuth token (proof of ownership),
+//!    or `api.github.com/users/<login>` (public facts, development only), over MPC-TLS with a notary.
 //! 2. Present: only `login`, `public_repos` and `created_at` are revealed; everything else stays hidden.
 //! 3. Verify: the presentation is checked against the trusted notary key and Mozilla's root certificates.
 //! 4. Interpret: a public, deterministic rule turns the revealed fields into a claim.
@@ -48,6 +49,27 @@ pub const MAX_RECV_DATA: usize = 1 << 14;
 pub const DEV_NOTARY_KEY: [u8; 32] = [7u8; 32];
 // Fields revealed to the issuer. Everything else in the response stays hidden.
 pub const REVEALED_FIELDS: [&str; 3] = ["login", "public_repos", "created_at"];
+
+/// Whose GitHub account is proven.
+pub enum Subject {
+    /// The account the OAuth token belongs to (`GET /user`): proves the user controls it.
+    Owner { token: String },
+    /// Any public account (`GET /users/<login>`): public facts only, not ownership. Development only.
+    Public { login: String },
+}
+
+// No Debug derive: the token must never reach a log.
+impl std::fmt::Display for Subject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Subject::Owner { .. } => write!(f, "the token's owner (/user)"),
+            Subject::Public { login } => write!(f, "public account {login} (/users/{login})"),
+        }
+    }
+}
+
+/// Request headers whose value is never revealed in a presentation.
+const SECRET_HEADERS: [&str; 2] = ["authorization", "cookie"];
 
 /// Accept prover connections forever; each one gets its own notarization session.
 pub async fn serve_notary(listen: &str, key_path: &Path) -> Result<()> {
@@ -105,30 +127,30 @@ pub fn public_key_hex(key: &[u8; 32]) -> Result<String> {
 /// Step 1, prover side: fetch the GitHub profile over MPC-TLS and get the notary's attestation.
 pub async fn notarize<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
     socket: S,
-    login: &str,
+    subject: &Subject,
 ) -> Result<(Attestation, Secrets)> {
-    notarize_io(socket.compat(), login).await
+    notarize_io(socket.compat(), subject).await
 }
 
 /// Connect to the notary at `address` (`host:port` for TCP, `ws://` or `wss://` URL for WebSocket) and notarize.
-pub async fn notarize_via(address: &str, login: &str) -> Result<(Attestation, Secrets)> {
+pub async fn notarize_via(address: &str, subject: &Subject) -> Result<(Attestation, Secrets)> {
     if address.starts_with("ws://") || address.starts_with("wss://") {
         let (ws, _) = async_tungstenite::tokio::connect_async(address)
             .await
             .with_context(|| format!("cannot reach the notary at {address}"))?;
-        notarize_io(ws_stream_tungstenite::WsStream::new(ws), login).await
+        notarize_io(ws_stream_tungstenite::WsStream::new(ws), subject).await
     } else {
         let socket = tokio::net::TcpStream::connect(address)
             .await
             .with_context(|| format!("cannot reach the notary at {address}"))?;
-        notarize(socket, login).await
+        notarize(socket, subject).await
     }
 }
 
 /// Step 1, prover side, over any byte stream (TCP or WebSocket).
 pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + Send + Unpin + 'static>(
     socket: S,
-    login: &str,
+    subject: &Subject,
 ) -> Result<(Attestation, Secrets)> {
     let session = Session::new(socket);
     let (driver, mut handle) = session.split();
@@ -153,8 +175,12 @@ pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + S
         hyper::client::conn::http1::handshake(TokioIo::new(tls_connection.compat())).await?;
     tokio::spawn(connection);
 
-    let request = Request::builder()
-        .uri(format!("/users/{login}"))
+    let mut request = Request::builder();
+    request = match subject {
+        Subject::Owner { token } => request.uri("/user").header("Authorization", format!("Bearer {token}")),
+        Subject::Public { login } => request.uri(format!("/users/{login}")),
+    };
+    let request = request
         .header("Host", HOST)
         .header("Accept", "application/vnd.github+json")
         // TLSNotary does not support compressed responses.
@@ -162,7 +188,7 @@ pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + S
         .header("Connection", "close")
         .header("User-Agent", "smart-ssi-prototype")
         .body(Empty::<Bytes>::new())?;
-    info!("requesting https://{HOST}/users/{login}");
+    info!("requesting {subject} from {HOST}");
     let response = sender.send_request(request).await?;
     if response.status() != StatusCode::OK {
         bail!("GitHub answered {}", response.status());
@@ -302,6 +328,13 @@ pub fn present(attestation: &Attestation, secrets: &Secrets) -> Result<Presentat
     let request = &transcript.requests[0];
     builder.reveal_sent(request.without_data())?;
     builder.reveal_sent(&request.request.target)?;
+    // Every header name is shown; secret values (the OAuth token) stay hidden.
+    for header in &request.headers {
+        builder.reveal_sent(header.without_value())?;
+        if !SECRET_HEADERS.iter().any(|name| header.name.as_str().eq_ignore_ascii_case(name)) {
+            builder.reveal_sent(&header.value)?;
+        }
+    }
 
     let response = &transcript.responses[0];
     builder.reveal_recv(response.without_data())?;
@@ -346,6 +379,21 @@ pub fn verify(presentation: &Presentation, trusted: Option<&str>) -> Result<Valu
     }
     let mut transcript = transcript.context("no transcript")?;
     transcript.set_unauthed(0);
+
+    // Which endpoint was called decides what is proven: /user is the token owner's own account.
+    let sent = String::from_utf8_lossy(transcript.sent_unsafe());
+    tracing::debug!("issuer view of the request: {}", sent.replace('\0', "·").replace("\r\n", " | "));
+    let request_line = sent.split("\r\n").next().unwrap_or_default();
+    let owner = if request_line == "GET /user HTTP/1.1" {
+        true
+    } else if request_line.starts_with("GET /users/") && request_line.ends_with(" HTTP/1.1") && !request_line.contains('\0') {
+        false
+    } else {
+        bail!("unexpected request: {}", request_line.replace('\0', "·"));
+    };
+    if !transcript.received_unsafe().starts_with(b"HTTP/1.1 200 ") {
+        bail!("GitHub did not answer 200");
+    }
     let received = String::from_utf8_lossy(transcript.received_unsafe());
     let shown = transcript.received_unsafe().iter().filter(|b| **b != 0).count();
     info!("issuer sees {shown} of {} received bytes", transcript.received_unsafe().len());
@@ -363,6 +411,7 @@ pub fn verify(presentation: &Presentation, trusted: Option<&str>) -> Result<Valu
     let at = DateTime::<Utc>::UNIX_EPOCH + Duration::from_secs(connection_info.time);
     fields.insert("proven_at".into(), json!(at.to_rfc3339()));
     fields.insert("server".into(), json!(server));
+    fields.insert("owner".into(), json!(owner));
     Ok(Value::Object(fields))
 }
 
@@ -380,7 +429,8 @@ pub fn interpret(revealed: &Value) -> Result<Value> {
             "login": revealed["login"],
             "public_repos": repos,
             "account_age_years": years,
-            "source": "github",
+            // github:owner = proven through the user's own session; github:public = anyone's public profile.
+            "source": if revealed["owner"] == json!(true) { "github:owner" } else { "github:public" },
             "proven_at": revealed["proven_at"],
         }
     }))

@@ -21,6 +21,8 @@ const PORT = Number(process.env.PORT ?? 8787);
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_PROOF_AGE_S = 15 * 60;
 const MAX_REVOKE_AGE_S = 5 * 60;
+// Public-profile proofs show facts about any account, not that the user owns it: development only.
+const ALLOW_PUBLIC_PROOFS = process.env.ALLOW_PUBLIC_PROOFS === '1';
 const DATA_DIR = process.env.DATA_DIR ?? join(ROOT, 'issuer/data');
 const USED_PROOFS = join(DATA_DIR, 'used-proofs.json');
 
@@ -96,6 +98,9 @@ async function postAttestation(r: Roles, body: Record<string, unknown>) {
     claim = verifyPresentation(presentation);
   } catch (error) {
     throw new HttpError(422, (error as Error).message);
+  }
+  if (claim.data.source !== 'github:owner' && !ALLOW_PUBLIC_PROOFS) {
+    throw new HttpError(422, `proof does not show account ownership (source ${claim.data.source}): prove through your own GitHub session`);
   }
   const age = (Date.now() - Date.parse(claim.data.proven_at)) / 1000;
   if (!(age >= 0 && age <= MAX_PROOF_AGE_S)) throw new HttpError(422, `proof is too old (${Math.round(age)} s, max ${MAX_PROOF_AGE_S} s)`);
