@@ -66,6 +66,8 @@ final class BadgeModel: ObservableObject {
     // Development: `-notary host:port` and `-issuer url` at launch override the defaults.
     @Published var notary = UserDefaults.standard.string(forKey: "notary") ?? "wss://smart-ssi-notary-ikgz5gajyq-ew.a.run.app"
     @Published var issuerURL = UserDefaults.standard.string(forKey: "issuer") ?? "https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app"
+    // Development: `-verifyURL http://<mac>:4242/verify` points QR codes at a local copy of the site.
+    let verifyURL = UserDefaults.standard.string(forKey: "verifyURL") ?? "https://www.chromedao.xyz/verify"
     // Development: `-login <name>` at launch prefills the public-profile proof.
     @Published var login = UserDefaults.standard.string(forKey: "login") ?? ""
 
@@ -152,6 +154,17 @@ final class BadgeModel: ObservableObject {
                 note("revoke failed: \(error)")
             }
         }
+    }
+
+    /// The link a QR code carries: the wallet signs `smart-ssi:show:<wallet>:<unix time>`, so the page knows the
+    /// person showing it holds the badge right now. Everything is in the fragment, which browsers never send to a
+    /// server. The page refuses codes older than 2 minutes; the app renews them every 30 seconds.
+    func showLink() -> URL? {
+        guard let wallet else { return nil }
+        let time = Int(Date().timeIntervalSince1970)
+        guard let signature = try? wallet.sign("smart-ssi:show:\(wallet.address):\(time)") else { return nil }
+        let base64url = signature.replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        return URL(string: "\(verifyURL)#w=\(wallet.address)&t=\(time)&s=\(base64url)")
     }
 
     private var client: IssuerClient? {

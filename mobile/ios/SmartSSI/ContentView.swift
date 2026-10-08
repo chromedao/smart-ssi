@@ -49,13 +49,16 @@ private struct Page<Content: View>: View {
 
 private struct BadgesTab: View {
     @ObservedObject var model: BadgeModel
+    @State private var showing = false
 
     var body: some View {
         Page(title: "Badges") {
             if !model.loaded {
                 Waiting(title: "", detail: "Looking for your badges on Solana…")
             } else if let badge = model.badge {
-                BadgeCard(badge: badge)
+                Button { showing = true } label: { BadgeCard(badge: badge) }.buttonStyle(.plain)
+                PrimaryButton(title: "SHOW TO SOMEONE") { showing = true }
+                Text("A QR code they scan with their camera: their browser says yes or no.").font(.caption).foregroundStyle(dim)
                 BadgeActions(badge: badge, model: model)
             } else {
                 VStack(alignment: .leading, spacing: 14) {
@@ -72,6 +75,11 @@ private struct BadgesTab: View {
             #endif
         }
         .refreshable { await model.refresh() }
+        .fullScreenCover(isPresented: $showing) {
+            if let badge = model.badge {
+                ShowBadge(badge: badge, link: model.showLink, close: { showing = false })
+            }
+        }
     }
 }
 
@@ -122,7 +130,7 @@ private struct BadgeActions: View {
             Link(destination: url) { Label("See it on Solana (test network)", systemImage: "arrow.up.right.square") }
                 .font(.callout).tint(green)
         }
-        PrimaryButton(title: "UPDATE", action: model.start)
+        SecondaryButton(title: "UPDATE", action: model.start)
         SecondaryButton(title: model.removing ? "REMOVING…" : "REMOVE") { confirmRemove = true }
             .disabled(model.removing)
             .confirmationDialog("Remove your badge?", isPresented: $confirmRemove, titleVisibility: .visible) {
