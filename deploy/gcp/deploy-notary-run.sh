@@ -3,11 +3,12 @@
 # proof, scales to zero. Provers connect to wss://<service url>.
 #
 #   PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary-run.sh
+#   (new project: also set BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX)
 #
 # - Key: 32 random bytes generated once straight into Secret Manager (secret notary-key), mounted as a
 #   file. It never touches the disk of this machine and is never in the image.
 # - Image: the same as the VM notary (deploy/notary.Dockerfile), started with `notary --ws`.
-# Run from the repository root, after deploy-notary.sh created the project and the registry.
+# Run from the repository root. Creates the project and the Artifact Registry repository if missing.
 set -euo pipefail
 
 : "${PROJECT_ID:?set PROJECT_ID}"
@@ -16,10 +17,21 @@ SERVICE=smart-ssi-notary
 IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/smart-ssi/notary:$(git rev-parse --short HEAD)"
 
 step() { printf '\n== %s\n' "$*"; }
+step "Project $PROJECT_ID"
+if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+  : "${BILLING_ACCOUNT:?set BILLING_ACCOUNT to create the project}"
+  gcloud projects create "$PROJECT_ID" --name="Chrome DAO Smart-SSI"
+  gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT"
+fi
 gcloud config set project "$PROJECT_ID" >/dev/null
 
-step "APIs: Cloud Run, Secret Manager"
-gcloud services enable run.googleapis.com secretmanager.googleapis.com
+step "APIs: Cloud Run, Secret Manager, Artifact Registry, Cloud Build"
+gcloud services enable run.googleapis.com secretmanager.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+
+step "Artifact Registry repository smart-ssi ($REGION)"
+gcloud artifacts repositories describe smart-ssi --location="$REGION" >/dev/null 2>&1 ||
+  gcloud artifacts repositories create smart-ssi --location="$REGION" --repository-format=docker \
+    --description="Smart-SSI images"
 
 step "Secret notary-key"
 if ! gcloud secrets describe notary-key >/dev/null 2>&1; then

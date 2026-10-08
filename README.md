@@ -62,13 +62,11 @@ PROJECT_ID=chromedao-smart-ssi deploy/gcp/deploy-notary-run.sh   # redeploy
 
 `--notary` takes `host:port` (TCP) or a `ws://` / `wss://` URL; `notary --ws` serves WebSocket on `$PORT`. A proof from a Mac in France takes about 5.5 s through Cloud Run (5.0 s through the VM). The apps use this notary by default.
 
-### Compute Engine VM (previous setup)
-
-`35.240.102.52:7047`, key `026c4ab7357b58647dc0fb22d1a0196981d3c68f8c33c18cefea48ff0e813a3068`, VM `e2-standard-2` (`deploy/gcp/deploy-notary.sh`, `deploy/gcp/notary-vm.sh start|stop`). Stopped. It still runs the pre-#9 protocol: redeploy it before use. Development only: keys are files or secrets today, Cloud KMS later.
+The first notary ran on a Compute Engine VM over raw TCP ([#7](https://github.com/chromedao/smart-ssi/issues/7)); it was deleted once Cloud Run was measured ([#9](https://github.com/chromedao/smart-ssi/issues/9)). `notary --listen host:port` still serves raw TCP for local use.
 
 ## Public issuer API (Cloud Run)
 
-`https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app` ([#8](https://github.com/chromedao/smart-ssi/issues/8)): the issuer API on Cloud Run, same project, trusting our notaries (`NOTARY_PUBKEY` takes comma-separated keys). Devnet keys come from Secret Manager (`issuer-keys`), never from the image. Prototype limits: one instance, replay store lost on restart.
+`https://smart-ssi-issuer-ikgz5gajyq-ew.a.run.app` ([#8](https://github.com/chromedao/smart-ssi/issues/8)): the issuer API on Cloud Run, same project, trusting the Cloud Run notary (`NOTARY_PUBKEY`, comma-separated to trust several keys). Devnet keys come from Secret Manager (`issuer-keys`), never from the image. Prototype limits: one instance, replay store lost on restart.
 
 ```bash
 PROJECT_ID=chromedao-smart-ssi NOTARY_PUBKEY=<notary key> deploy/gcp/deploy-issuer.sh
@@ -121,7 +119,8 @@ Same flow as iOS. The wallet seed comes from the Rust library (Ed25519, address 
 | Mac (CLI), local notary | ~1.3 s |
 | Mac (CLI), Cloud Run notary (WebSocket) | ~5.5 s |
 | iOS simulator (app) | ~1.5 s |
-| **iPhone 12 Pro (app), VM notary, Wi-Fi** | **5.0 s** |
+| iPhone 12 Pro (app), VM notary (deleted), Wi-Fi | 5.0 s |
+| **iPhone 12 Pro (app), owner proof, Cloud Run notary cold** | **~31 s** (10 s instance start; the app now wakes the notary during GitHub sign-in) |
 | Android emulator, software AES | 144.6 s |
 | Android emulator, `+aes,+sha2` | 59.5 s |
 
