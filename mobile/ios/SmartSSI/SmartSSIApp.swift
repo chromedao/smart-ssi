@@ -19,6 +19,14 @@ struct Facts {
     var accountAgeYears: Int
     var createdAt: Date?
     var active: Bool
+    /// Attestation source, e.g. `github:owner`.
+    var source = "github:owner"
+
+    /// The website the facts come from, for its name and icon.
+    var sourceDomain: String {
+        let name = source.split(separator: ":").first.map(String.init) ?? source
+        return ["github": "github.com"][name] ?? "\(name).com"
+    }
 }
 
 struct Badge {
@@ -73,6 +81,11 @@ final class BadgeModel: ObservableObject {
             #if DEBUG
             // Development: `-autoProvePublic YES` runs a public-profile proof at launch (screens without GitHub sign-in).
             if UserDefaults.standard.bool(forKey: "autoProvePublic") { provePublic() }
+            // `-previewBadge YES` shows a sample badge (design work; nothing is issued).
+            if UserDefaults.standard.bool(forKey: "previewBadge") {
+                stage = .badge(Badge(facts: Facts(login: "octocat", publicRepos: 8, accountAgeYears: 15, active: true),
+                                     verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"))
+            }
             #endif
         }
     }
@@ -224,7 +237,8 @@ final class BadgeModel: ObservableObject {
             publicRepos: data["public_repos"] as? Int ?? 0,
             accountAgeYears: data["account_age_years"] as? Int ?? 0,
             createdAt: date(revealed["created_at"]),
-            active: claim["claim"] as? String == "dev.active"
+            active: claim["claim"] as? String == "dev.active",
+            source: data["source"] as? String ?? "github:owner"
         )
     }
 
@@ -234,7 +248,8 @@ final class BadgeModel: ObservableObject {
             publicRepos: data["public_repos"] as? Int ?? 0,
             accountAgeYears: data["account_age_years"] as? Int ?? 0,
             createdAt: nil,
-            active: data["claim"] as? String == "dev.active"
+            active: data["claim"] as? String == "dev.active",
+            source: data["source"] as? String ?? "github:owner"
         )
     }
 

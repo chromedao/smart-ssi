@@ -64,11 +64,11 @@ private struct Home: View {
             .foregroundStyle(dim)
 
         VStack(alignment: .leading, spacing: 16) {
-            StepRow(number: 1, icon: "person.crop.circle.badge.checkmark", title: "Sign in to GitHub",
+            StepRow(number: 1, icon: nil, domain: "github.com", title: "Sign in to GitHub",
                     detail: "On GitHub's own page. Your password stays with GitHub.")
-            StepRow(number: 2, icon: "iphone", title: "Your phone checks your account",
+            StepRow(number: 2, icon: "iphone", domain: nil, title: "Your phone checks your account",
                     detail: "It keeps everything private except three facts: your username, your number of public repositories, and when your account was created.")
-            StepRow(number: 3, icon: "checkmark.seal", title: "You get your badge",
+            StepRow(number: 3, icon: "checkmark.seal", domain: nil, title: "You get your badge",
                     detail: "You see exactly what is shared before anything is sent. You can remove the badge at any time.")
         }
         .padding(16)
@@ -114,6 +114,10 @@ private struct Review: View {
     var body: some View {
         Steps(current: 3)
         Text("Here's everything Chrome DAO will receive").font(.title2.monospaced().bold())
+        HStack(spacing: 10) {
+            SourceIcon(domain: facts.sourceDomain, size: 28)
+            Text("Proven from **\(facts.sourceDomain)**").font(.callout).foregroundStyle(dim)
+        }
         VStack(spacing: 0) {
             FactRow(label: "GitHub username", value: facts.login)
             FactRow(label: "Public repositories", value: "\(facts.publicRepos)")
@@ -137,9 +141,14 @@ private struct BadgeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: badge.facts.active ? "checkmark.seal.fill" : "seal")
-                    .font(.system(size: 40)).foregroundStyle(badge.facts.active ? green : dim)
+            HStack(spacing: 14) {
+                SourceIcon(domain: badge.facts.sourceDomain, size: 52)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: badge.facts.active ? "checkmark.seal.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 20)).foregroundStyle(badge.facts.active ? green : dim)
+                            .background(Circle().fill(Color.black).padding(2))
+                            .offset(x: 6, y: 6)
+                    }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(badge.facts.active ? "Active developer" : "GitHub account verified").font(.title2.monospaced().bold())
                     Text("@\(badge.facts.login)").font(.callout.monospaced()).foregroundStyle(dim)
@@ -209,18 +218,42 @@ private struct Steps: View {
 
 private struct StepRow: View {
     let number: Int
-    let icon: String
+    var icon: String?
+    var domain: String?
     let title: String
     let detail: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon).font(.title3).foregroundStyle(green).frame(width: 28)
+            Group {
+                if let domain { SourceIcon(domain: domain, size: 26) } else { Image(systemName: icon ?? "circle").font(.title3).foregroundStyle(green) }
+            }
+            .frame(width: 28)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(number). \(title)").font(.headline)
                 Text(detail).font(.subheadline).foregroundStyle(dim)
             }
         }
+    }
+}
+
+/// The source website's own icon (`/apple-touch-icon.png`, then `/favicon.ico`), fetched from that website
+/// only: no third-party favicon service learns which sources the user has badges from.
+private struct SourceIcon: View {
+    let domain: String
+    let size: CGFloat
+    @State private var useFavicon = false
+
+    var body: some View {
+        AsyncImage(url: URL(string: "https://\(domain)/\(useFavicon ? "favicon.ico" : "apple-touch-icon.png")")) { phase in
+            switch phase {
+            case .success(let image): image.resizable().interpolation(.high).scaledToFit()
+            case .failure: Color.clear.onAppear { if !useFavicon { useFavicon = true } }
+            default: Color.white.opacity(0.08)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
     }
 }
 
