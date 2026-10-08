@@ -13,7 +13,8 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 3a | Notary as its own TCP server with its own key; the issuer only accepts the trusted notary key | Done |
 | 3b | Proof of ownership: authenticated GitHub request ([#2](https://github.com/chromedao/smart-ssi/issues/2)) | Next |
 | 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Done on devnet |
-| 4 | Prover on iOS and Android ([#7](https://github.com/chromedao/smart-ssi-paper/issues/7)) | Later |
+| 4a | Prover library compiles for iOS (device, simulator) and Android; runs inside the iOS simulator against our notary | Done |
+| 4b | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
 
 ## Run
 
@@ -38,6 +39,17 @@ One run does the whole loop in about 2 seconds:
 4. **Interpret**: a public rule (`public_repos >= 5 and account age >= 1 year`) gives the claim `dev.active` or `dev.not_yet`.
 
 Outputs go to `prover/out/`: `attestation.tlsn`, `secrets.tlsn` (keep private), `presentation.tlsn`, `claim.json`.
+
+## Mobile
+
+The proof logic is a library (`prover/src/lib.rs`), shared by the CLI and, later, the apps and the issuer API. It cross-compiles for `aarch64-apple-ios`, `aarch64-apple-ios-sim` and `aarch64-linux-android` (Android NDK clang as linker).
+
+```bash
+rustup target add aarch64-apple-ios-sim
+cd prover && CARGO_TARGET_DIR=../vendor/tlsn/target cargo build --release --bin smart-ssi-prover --target aarch64-apple-ios-sim
+xcrun simctl boot "iPhone 18 Pro"
+xcrun simctl spawn "iPhone 18 Pro" $PWD/../vendor/tlsn/target/aarch64-apple-ios-sim/release/smart-ssi-prover prove <login> --notary 127.0.0.1:7047
+```
 
 ## Issuer (Solana devnet)
 
