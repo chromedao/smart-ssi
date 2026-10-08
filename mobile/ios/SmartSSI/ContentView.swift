@@ -97,20 +97,31 @@ private struct BadgeCard: View {
                             .offset(x: 6, y: 6)
                     }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(badge.facts.active ? "Active developer" : "GitHub account verified").font(.title3.monospaced().bold())
+                    Text(badge.facts.title).font(.title3.monospaced().bold())
                     Text("@\(badge.facts.login) · GitHub").font(.callout.monospaced()).foregroundStyle(dim)
                 }
             }
-            if !badge.facts.active {
-                Text("Not an active developer yet: that takes \(activeRule). Update your badge once you get there.")
-                    .font(.callout).foregroundStyle(dim)
+            if badge.facts.version == 2 {
+                if !badge.facts.languages.isEmpty { LanguageBar(languages: badge.facts.languages) }
+                VStack(spacing: 0) {
+                    FactRow(label: "Coding since", value: "\(badge.facts.sinceYear)")
+                    FactRow(label: "Contributions, 12 months", value: badge.facts.contributions12m.formatted())
+                    FactRow(label: "Projects contributed to", value: "\(badge.facts.reposContributed)")
+                    if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
+                }
+                .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                if !badge.facts.active {
+                    Text("Update your badge: the new GitHub badge counts your contributions to every project, your languages and since when you code.")
+                        .font(.callout).foregroundStyle(dim)
+                }
+                VStack(spacing: 0) {
+                    FactRow(label: "Public repositories", value: "\(badge.facts.publicRepos)")
+                    FactRow(label: "Account age", value: badge.facts.accountAgeYears == 1 ? "1 year" : "\(badge.facts.accountAgeYears) years")
+                    if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
+                }
+                .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
             }
-            VStack(spacing: 0) {
-                FactRow(label: "Public repositories", value: "\(badge.facts.publicRepos)")
-                FactRow(label: "Account age", value: badge.facts.accountAgeYears == 1 ? "1 year" : "\(badge.facts.accountAgeYears) years")
-                if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
-            }
-            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
         }
         .padding(18)
         .background(card, in: RoundedRectangle(cornerRadius: 16))
@@ -342,11 +353,24 @@ private struct Review: View {
         }
         VStack(spacing: 0) {
             FactRow(label: "GitHub username", value: facts.login)
-            FactRow(label: "Public repositories", value: "\(facts.publicRepos)")
-            FactRow(label: "Account created", value: facts.createdAt.map { $0.formatted(.dateTime.month(.wide).year()) } ?? "\(facts.accountAgeYears) years ago")
+            if facts.version == 2 {
+                FactRow(label: "Coding since", value: "\(facts.sinceYear)")
+                FactRow(label: "Contributions, 12 months", value: facts.contributions12m.formatted())
+                FactRow(label: "Projects contributed to", value: "\(facts.reposContributed)")
+            } else {
+                FactRow(label: "Public repositories", value: "\(facts.publicRepos)")
+                FactRow(label: "Account created", value: facts.createdAt.map { $0.formatted(.dateTime.month(.wide).year()) } ?? "\(facts.accountAgeYears) years ago")
+            }
         }
         .background(card, in: RoundedRectangle(cornerRadius: 14))
-        Text("Nothing else: no email, no private repositories, no GitHub token. Your badge is tied to a private key that only this phone holds.")
+        if facts.version == 2, !facts.languages.isEmpty {
+            LanguageBar(languages: facts.languages)
+                .padding(14)
+                .background(card, in: RoundedRectangle(cornerRadius: 14))
+        }
+        Text(facts.version == 2
+             ? "Nothing else: no repository names, no code, no email, no GitHub token. Languages are counted from your own commits over the last 12 months. Your badge is tied to a private key that only this phone holds."
+             : "Nothing else: no email, no private repositories, no GitHub token. Your badge is tied to a private key that only this phone holds.")
             .font(.callout).foregroundStyle(dim)
         Eligibility(active: facts.active, repos: facts.publicRepos, years: facts.accountAgeYears)
         PrimaryButton(title: "SHARE AND GET MY BADGE", action: issue)
@@ -404,6 +428,54 @@ private struct SourceIcon: View {
     }
 }
 
+extension Facts {
+    var title: String {
+        if version == 2 { return active ? "Active developer" : "Developer" }
+        return active ? "Active developer" : "GitHub account verified"
+    }
+}
+
+/// GitHub's own language colors (linguist), as on profiles; the same table as the /verify page.
+func languageColor(_ name: String) -> Color {
+    let hex: [String: UInt32] = [
+        "TypeScript": 0x3178c6, "JavaScript": 0xf1e05a, "Rust": 0xdea584, "Swift": 0xf05138, "Python": 0x3572a5, "Go": 0x00add8,
+        "Kotlin": 0xa97bff, "Java": 0xb07219, "C++": 0xf34b7d, "C": 0x555555, "C#": 0x178600, "Ruby": 0x701516, "PHP": 0x4f5d95,
+        "Shell": 0x89e051, "Dart": 0x00b4ab, "HTML": 0xe34c26, "CSS": 0x663399, "Solidity": 0xaa6746, "Vue": 0x41b883,
+        "Elixir": 0x6e4a7e, "Haskell": 0x5e5086, "Scala": 0xc22d40, "Objective-C": 0x438eff, "Lua": 0x000080, "Zig": 0xec915c,
+    ]
+    let value = hex[name] ?? 0x8b8b8b
+    return Color(red: Double(value >> 16 & 0xff) / 255, green: Double(value >> 8 & 0xff) / 255, blue: Double(value & 0xff) / 255)
+}
+
+/// What the user codes, by their own commits: one stacked bar, then each language with its share.
+struct LanguageBar: View {
+    let languages: [(name: String, percent: Int)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WHAT YOU CODE").font(.caption2.monospaced()).foregroundStyle(dim)
+            GeometryReader { geometry in
+                HStack(spacing: 2) {
+                    ForEach(languages, id: \.name) { language in
+                        Rectangle().fill(languageColor(language.name))
+                            .frame(width: max(2, geometry.size.width * CGFloat(language.percent) / 100 - 2))
+                    }
+                }
+            }
+            .frame(height: 10)
+            .clipShape(Capsule())
+            ForEach(languages, id: \.name) { language in
+                HStack(spacing: 10) {
+                    Circle().fill(languageColor(language.name)).frame(width: 9, height: 9)
+                    Text(language.name).font(.subheadline)
+                    Spacer()
+                    Text("\(language.percent)%").font(.subheadline.monospaced()).foregroundStyle(dim)
+                }
+            }
+        }
+    }
+}
+
 private struct FactRow: View {
     let label: String
     let value: String
@@ -428,7 +500,7 @@ private struct Eligibility: View {
             Image(systemName: active ? "checkmark.seal.fill" : "info.circle").foregroundStyle(active ? green : dim)
             Text(active
                  ? "You qualify as an **active developer** (\(activeRule))."
-                 : "You'll get a verified GitHub badge, but not the **active developer** status yet: it takes \(activeRule).")
+                 : "You'll get a developer badge, but not the **active** status yet: it takes \(activeRule).")
                 .font(.callout)
         }
         .padding(14)

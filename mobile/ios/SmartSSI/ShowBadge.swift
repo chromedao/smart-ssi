@@ -28,9 +28,14 @@ struct ShowBadge: View {
                 }
 
                 VStack(spacing: 6) {
-                    Text(badge.facts.active ? "Active developer" : "Verified GitHub account")
+                    Text(badge.facts.title)
                         .font(.title.monospaced().bold()).multilineTextAlignment(.center)
-                    Text("@\(badge.facts.login) · GitHub").font(.callout.monospaced()).foregroundStyle(dim)
+                    Text(badge.facts.version == 2 ? "@\(badge.facts.login) · coding since \(badge.facts.sinceYear)" : "@\(badge.facts.login) · GitHub")
+                        .font(.callout.monospaced()).foregroundStyle(dim)
+                    if badge.facts.version == 2, !badge.facts.languages.isEmpty {
+                        Text(badge.facts.languages.filter { $0.name != "Other" }.prefix(3).map(\.name).joined(separator: " · "))
+                            .font(.callout.monospaced().bold()).foregroundStyle(green)
+                    }
                 }
 
                 ZStack {

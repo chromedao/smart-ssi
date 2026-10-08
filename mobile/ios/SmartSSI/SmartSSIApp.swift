@@ -15,10 +15,17 @@ struct SmartSSIApp: App {
 /// What the user sees about their account before agreeing to share it, and what the badge holds after.
 struct Facts {
     var login: String
-    var publicRepos: Int
+    var publicRepos: Int = 0
     var accountAgeYears: Int
     var createdAt: Date?
     var active: Bool
+    /// Developer badge (v2): since when, how much lately, where, in which languages (by the user's own commits).
+    var version = 1
+    var sinceYear = 0
+    var yearsActive = 0
+    var contributions12m = 0
+    var reposContributed = 0
+    var languages: [(name: String, percent: Int)] = []
     /// Attestation source, e.g. `github:owner`.
     var source = "github:owner"
 
@@ -48,8 +55,8 @@ enum Flow {
 
 enum Tab: Hashable { case badges, sources, me }
 
-/// The rule the issuer applies (prover `interpret`), shown to users in plain words.
-let activeRule = "5 or more public repositories, and an account older than 1 year"
+/// The rule the issuer applies (prover `interpret`, DEVELOPER_RULE), shown to users in plain words.
+let activeRule = "100+ contributions in the last 12 months, or contributions to 3+ projects, on an account older than a year"
 
 @MainActor
 final class BadgeModel: ObservableObject {
@@ -91,7 +98,10 @@ final class BadgeModel: ObservableObject {
             if UserDefaults.standard.bool(forKey: "autoProvePublic") { provePublic() }
             // `-previewBadge YES` shows a sample badge (design work; nothing is issued).
             if UserDefaults.standard.bool(forKey: "previewBadge") {
-                badge = (Badge(facts: Facts(login: "octocat", publicRepos: 8, accountAgeYears: 15, active: true),
+                var sample = Facts(login: "octocat", accountAgeYears: 15, active: true)
+                (sample.version, sample.sinceYear, sample.yearsActive, sample.contributions12m, sample.reposContributed) = (2, 2014, 9, 640, 23)
+                sample.languages = [("TypeScript", 62), ("Rust", 21), ("Swift", 9), ("Other", 8)]
+                badge = (Badge(facts: sample,
                                      verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"))
             }
             #endif
@@ -259,26 +269,38 @@ final class BadgeModel: ObservableObject {
 
     private static func facts(fromProof proof: GithubProof) -> Facts {
         let claim = json(proof.claimJson), revealed = json(proof.revealedJson)
-        let data = claim["data"] as? [String: Any] ?? [:]
-        return Facts(
-            login: data["login"] as? String ?? "?",
-            publicRepos: data["public_repos"] as? Int ?? 0,
-            accountAgeYears: data["account_age_years"] as? Int ?? 0,
-            createdAt: date(revealed["created_at"]),
-            active: claim["claim"] as? String == "dev.active",
-            source: data["source"] as? String ?? "github:owner"
-        )
+        var facts = facts(from: claim["data"] as? [String: Any] ?? [:], claim: claim["claim"] as? String)
+        facts.createdAt = date(revealed["created_at"])
+        return facts
     }
 
     private static func facts(fromAttestation data: [String: Any]) -> Facts {
-        Facts(
+        facts(from: data, claim: data["claim"] as? String)
+    }
+
+    /// Reads v1 (public_repos) and v2 (since_year, languages…) badge data alike.
+    private static func facts(from data: [String: Any], claim: String?) -> Facts {
+        let number = { (key: String) in (data[key] as? NSNumber)?.intValue ?? 0 }
+        var facts = Facts(
             login: data["login"] as? String ?? "?",
-            publicRepos: data["public_repos"] as? Int ?? 0,
-            accountAgeYears: data["account_age_years"] as? Int ?? 0,
-            createdAt: nil,
-            active: data["claim"] as? String == "dev.active",
-            source: data["source"] as? String ?? "github:owner"
+            publicRepos: number("public_repos"),
+            accountAgeYears: number("account_age_years"),
+            active: claim == "dev.active"
         )
+        facts.source = data["source"] as? String ?? "github:owner"
+        if data["since_year"] != nil {
+            facts.version = 2
+            facts.sinceYear = number("since_year")
+            facts.yearsActive = number("years_active")
+            facts.contributions12m = number("contributions_12m")
+            facts.reposContributed = number("repos_contributed")
+            facts.languages = (data["languages"] as? String ?? "").split(separator: ",").compactMap { entry in
+                let parts = entry.split(separator: ":")
+                guard parts.count == 2, let percent = Int(parts[1]) else { return nil }
+                return (String(parts[0]), percent)
+            }
+        }
+        return facts
     }
 
     private static func json(_ text: String) -> [String: Any] {

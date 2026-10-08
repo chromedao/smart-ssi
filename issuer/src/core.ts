@@ -11,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  SchemaDataType,
+  SchemaDataType as S,
   deserializeAttestationData,
   fetchMaybeAttestation,
   fetchMaybeCredential,
@@ -20,6 +20,7 @@ import {
   findAttestationPda,
   findCredentialPda,
   findSchemaPda,
+  getChangeSchemaVersionInstruction,
   getCloseAttestationInstruction,
   getCreateAttestationInstruction,
   getCreateCredentialInstruction,
@@ -37,22 +38,22 @@ const PROVER_BIN = process.env.PROVER_BIN ?? join(ROOT, 'vendor/tlsn/target/rele
 const NOTARY_KEY = process.env.NOTARY_KEY ?? join(ROOT, 'prover/notary.key');
 
 const CREDENTIAL_NAME = 'SMART-SSI-DEV';
-const SCHEMA = {
-  name: 'dev.github_account',
-  version: 1,
-  description: 'Smart-SSI: facts about a GitHub account, proven with TLSNotary',
-  fields: ['claim', 'login', 'public_repos', 'account_age_years', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
-  layout: [
-    SchemaDataType.String,
-    SchemaDataType.String,
-    SchemaDataType.U32,
-    SchemaDataType.U8,
-    SchemaDataType.String,
-    SchemaDataType.String,
-    SchemaDataType.String,
-    SchemaDataType.String,
-  ],
-};
+const SCHEMA_NAME = 'dev.github_account';
+/** v1: facts about an account (public repos, age). v2: the developer badge (since, activity, languages). */
+const SCHEMAS = {
+  1: {
+    description: 'Smart-SSI: facts about a GitHub account, proven with TLSNotary',
+    fields: ['claim', 'login', 'public_repos', 'account_age_years', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
+    layout: [S.String, S.String, S.U32, S.U8, S.String, S.String, S.String, S.String],
+  },
+  2: {
+    description: 'Smart-SSI: GitHub developer (since, activity, languages by own commits), proven with TLSNotary',
+    fields: ['claim', 'login', 'since_year', 'years_active', 'contributions_12m', 'repos_contributed', 'languages', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
+    layout: [S.String, S.String, S.U16, S.U8, S.U32, S.U32, S.String, S.String, S.String, S.String, S.String],
+  },
+} as const;
+type Version = keyof typeof SCHEMAS;
+const VERSIONS: Version[] = [2, 1];
 const EXPIRY_DAYS = 365;
 export const explorer = (account: string) => `https://explorer.solana.com/address/${account}?cluster=devnet`;
 export const sha256 = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex');
@@ -79,8 +80,10 @@ export async function roles() {
   const [feePayer, authority, signer] = await Promise.all([key('fee-payer'), key('authority'), key('signer')]);
   const client = await createClient().use(payer(feePayer)).use(solanaDevnetRpc());
   const [credential] = await findCredentialPda({ authority: authority.address, name: CREDENTIAL_NAME });
-  const [schema] = await findSchemaPda({ credential, name: SCHEMA.name, version: SCHEMA.version });
-  return { client, feePayer, authority, signer, credential, schema };
+  const schemas = {} as Record<Version, Address>;
+  for (const version of VERSIONS) [schemas[version]] = await findSchemaPda({ credential, name: SCHEMA_NAME, version });
+  // `schema` stays the v1 address for older callers.
+  return { client, feePayer, authority, signer, credential, schemas, schema: schemas[1] };
 }
 
 export type Roles = Awaited<ReturnType<typeof roles>>;
@@ -114,33 +117,34 @@ export async function setup(r: Roles, log: (line: string) => void) {
     );
     log(`credential created: ${tx}`);
   }
-  if ((await fetchMaybeSchema(r.client.rpc, r.schema)).exists) {
-    log(`schema exists: ${r.schema}`);
-  } else {
+  // v1 is created; later versions derive from it (SAS keeps the name and description, new layout and fields).
+  for (const version of [...VERSIONS].sort()) {
+    const schema = r.schemas[version];
+    if ((await fetchMaybeSchema(r.client.rpc, schema)).exists) {
+      log(`schema v${version} exists: ${schema}`);
+      continue;
+    }
+    const fields = { fieldNames: [...SCHEMAS[version].fields], layout: [...SCHEMAS[version].layout] };
     const tx = await send(
       r,
-      getCreateSchemaInstruction({
-        payer: r.client.payer,
-        authority: r.authority,
-        credential: r.credential,
-        schema: r.schema,
-        name: SCHEMA.name,
-        description: SCHEMA.description,
-        fieldNames: SCHEMA.fields,
-        layout: SCHEMA.layout,
-      }),
+      version === 1
+        ? getCreateSchemaInstruction({ payer: r.client.payer, authority: r.authority, credential: r.credential, schema, name: SCHEMA_NAME, description: SCHEMAS[1].description, ...fields })
+        : getChangeSchemaVersionInstruction({ payer: r.client.payer, authority: r.authority, credential: r.credential, existingSchema: r.schemas[(version - 1) as Version], newSchema: schema, ...fields }),
     );
-    log(`schema created: ${tx}`);
+    log(`schema v${version} created: ${tx}`);
   }
 }
 
 // --- verify, issue, check, revoke -------------------------------------------------
 
 export type Claim = {
+  schema: string;
   claim: string;
   rule: string;
-  data: { login: string; public_repos: number; account_age_years: number; source: string; proven_at: string };
+  data: { login: string; source: string; proven_at: string } & Record<string, unknown>;
 };
+
+const versionOf = (claim: Claim): Version => (claim.schema.endsWith('v2') ? 2 : 1);
 
 /** Verify a presentation with the Rust verifier, against the trusted notary key. Throws if it is not valid. */
 export function verifyPresentation(presentation: Uint8Array): Claim {
@@ -172,35 +176,32 @@ export function verifyPresentation(presentation: Uint8Array): Claim {
   }
 }
 
-async function attestationAddress(r: Roles, user: Address) {
-  const [pda] = await findAttestationPda({ credential: r.credential, schema: r.schema, nonce: user });
+async function attestationAddress(r: Roles, user: Address, version: Version = 1) {
+  const [pda] = await findAttestationPda({ credential: r.credential, schema: r.schemas[version], nonce: user });
   return pda;
 }
 
 export async function issue(r: Roles, user: Address, claim: Claim, presentation: Uint8Array) {
-  const data = {
-    claim: claim.claim,
-    login: claim.data.login,
-    public_repos: claim.data.public_repos,
-    account_age_years: claim.data.account_age_years,
-    source: claim.data.source,
-    proof_ref: sha256(presentation),
-    rules_hash: sha256(claim.rule),
-    proven_at: claim.data.proven_at,
-  };
-  const attestation = await attestationAddress(r, user);
-  if ((await fetchMaybeAttestation(r.client.rpc, attestation)).exists) {
-    // One attestation per user and schema: re-issuing replaces the previous one.
-    await send(r, getCloseAttestationInstruction({ payer: r.client.payer, attestation, authority: r.signer, credential: r.credential }));
+  const version = versionOf(claim);
+  const data: Record<string, unknown> = { claim: claim.claim };
+  for (const field of SCHEMAS[version].fields) if (field in claim.data) data[field] = claim.data[field];
+  Object.assign(data, { proof_ref: sha256(presentation), rules_hash: sha256(claim.rule) });
+  // One badge per user: the new one replaces any previous one, in either schema version.
+  for (const other of VERSIONS) {
+    const previous = await attestationAddress(r, user, other);
+    if ((await fetchMaybeAttestation(r.client.rpc, previous)).exists) {
+      await send(r, getCloseAttestationInstruction({ payer: r.client.payer, attestation: previous, authority: r.signer, credential: r.credential }));
+    }
   }
-  const schema = await fetchSchema(r.client.rpc, r.schema);
+  const attestation = await attestationAddress(r, user, version);
+  const schema = await fetchSchema(r.client.rpc, r.schemas[version]);
   const signature = await send(
     r,
     getCreateAttestationInstruction({
       payer: r.client.payer,
       authority: r.signer,
       credential: r.credential,
-      schema: r.schema,
+      schema: r.schemas[version],
       attestation,
       nonce: user,
       expiry: Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 86_400,
@@ -210,26 +211,36 @@ export async function issue(r: Roles, user: Address, claim: Claim, presentation:
   return { attestation, signature, data };
 }
 
-export type CheckResult = { valid: true; attestation: Address; data: Record<string, unknown> } | { valid: false; attestation: Address; reason: string };
+export type CheckResult =
+  | { valid: true; attestation: Address; version: Version; data: Record<string, unknown> }
+  | { valid: false; attestation: Address; reason: string };
 
+/** The user's badge, v2 first, as any verifier would read it from Solana. */
 export async function check(r: Roles, user: Address): Promise<CheckResult> {
-  const address = await attestationAddress(r, user);
-  const schema = await fetchSchema(r.client.rpc, r.schema);
-  const attestation = await fetchMaybeAttestation(r.client.rpc, address);
-  if (!attestation.exists) return { valid: false, attestation: address, reason: 'no attestation (never issued, or revoked)' };
-  if (schema.data.isPaused) return { valid: false, attestation: address, reason: 'schema is paused' };
-  const credential = await fetchMaybeCredential(r.client.rpc, r.credential);
-  if (!credential.exists || !credential.data.authorizedSigners.includes(attestation.data.signer)) {
-    return { valid: false, attestation: address, reason: 'signer is not authorized by the Smart-SSI credential' };
+  for (const version of VERSIONS) {
+    const address = await attestationAddress(r, user, version);
+    const attestation = await fetchMaybeAttestation(r.client.rpc, address);
+    if (!attestation.exists) continue;
+    const schema = await fetchSchema(r.client.rpc, r.schemas[version]);
+    if (schema.data.isPaused) return { valid: false, attestation: address, reason: 'schema is paused' };
+    const credential = await fetchMaybeCredential(r.client.rpc, r.credential);
+    if (!credential.exists || !credential.data.authorizedSigners.includes(attestation.data.signer)) {
+      return { valid: false, attestation: address, reason: 'signer is not authorized by the Smart-SSI credential' };
+    }
+    const { unixTimestamp } = await fetchSysvarClock(r.client.rpc);
+    if (attestation.data.expiry !== 0n && unixTimestamp >= attestation.data.expiry) return { valid: false, attestation: address, reason: 'expired' };
+    return { valid: true, attestation: address, version, data: deserializeAttestationData(schema.data, attestation.data.data) as Record<string, unknown> };
   }
-  const { unixTimestamp } = await fetchSysvarClock(r.client.rpc);
-  if (attestation.data.expiry !== 0n && unixTimestamp >= attestation.data.expiry) return { valid: false, attestation: address, reason: 'expired' };
-  return { valid: true, attestation: address, data: deserializeAttestationData(schema.data, attestation.data.data) as Record<string, unknown> };
+  return { valid: false, attestation: await attestationAddress(r, user, 2), reason: 'no attestation (never issued, or revoked)' };
 }
 
 export async function revoke(r: Roles, user: Address) {
-  const attestation = await attestationAddress(r, user);
-  if (!(await fetchMaybeAttestation(r.client.rpc, attestation)).exists) return { attestation, signature: null };
-  const signature = await send(r, getCloseAttestationInstruction({ payer: r.client.payer, attestation, authority: r.signer, credential: r.credential }));
-  return { attestation, signature };
+  let result: { attestation: Address; signature: string | null } = { attestation: await attestationAddress(r, user, 2), signature: null };
+  for (const version of VERSIONS) {
+    const attestation = await attestationAddress(r, user, version);
+    if (!(await fetchMaybeAttestation(r.client.rpc, attestation)).exists) continue;
+    const signature = await send(r, getCloseAttestationInstruction({ payer: r.client.payer, attestation, authority: r.signer, credential: r.credential }));
+    result = { attestation, signature };
+  }
+  return result;
 }
