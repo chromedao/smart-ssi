@@ -669,6 +669,7 @@ private struct DevelopmentPanel: View {
                 TextField("public GitHub login", text: $model.login)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
                 SecondaryButton(title: "PROVE PUBLIC PROFILE (NO OWNERSHIP)", action: model.provePublic)
+                SecondaryButton(title: "PROBE APPLE MUSIC LIBRARY") { Task { await AppleMusicProbe.run(log: model.note) } }
                 TextField("notary", text: $model.notary).textFieldStyle(.roundedBorder)
                 TextField("issuer URL", text: $model.issuerURL).textFieldStyle(.roundedBorder)
                 ForEach(Array(model.log.enumerated()), id: \.offset) { _, line in

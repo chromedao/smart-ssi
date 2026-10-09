@@ -18,3 +18,32 @@ enum AppleMusicLogin {
         return (developer, user)
     }
 }
+
+#if DEBUG
+/// Development: asks Apple Music what the library endpoints return (sizes, attributes, totals), without proving
+/// anything. Answers whether a page can carry genres only, how many songs fit in a page, and the library size.
+enum AppleMusicProbe {
+    static func run(log: @escaping @MainActor (String) -> Void) async {
+        guard await MusicAuthorization.request() == .authorized else { return await log("probe: not authorized") }
+        let paths = [
+            "/v1/me/library/songs?limit=1",
+            "/v1/me/library/songs?limit=100&fields[library-songs]=genreNames",
+            "/v1/me/library/songs?limit=300&fields[library-songs]=genreNames",
+            "/v1/me/recent/played/tracks?limit=30",
+        ]
+        for path in paths {
+            guard let url = URL(string: "https://api.music.apple.com" + path) else { continue }
+            do {
+                let response = try await MusicDataRequest(urlRequest: URLRequest(url: url)).response()
+                let json = (try? JSONSerialization.jsonObject(with: response.data)) as? [String: Any] ?? [:]
+                let items = json["data"] as? [[String: Any]] ?? []
+                let attributes = (items.first?["attributes"] as? [String: Any])?.keys.sorted().joined(separator: ",") ?? "-"
+                let total = (json["meta"] as? [String: Any])?["total"] ?? "-"
+                await log("probe \(path): \(response.urlResponse.statusCode), \(response.data.count) B, \(items.count) items, total \(total), attributes [\(attributes)]")
+            } catch {
+                await log("probe \(path): \(error)")
+            }
+        }
+    }
+}
+#endif
