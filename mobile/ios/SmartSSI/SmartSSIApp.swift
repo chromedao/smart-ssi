@@ -381,9 +381,12 @@ final class BadgeModel: ObservableObject {
         (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
     }
 
+    /// ISO 8601 dates, with or without fractional seconds (the prover writes none, JavaScript writes ms).
     private static func date(_ value: Any?) -> Date? {
         guard let text = value as? String else { return nil }
-        return ISO8601DateFormatter().date(from: text)
+        let precise = ISO8601DateFormatter()
+        precise.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return ISO8601DateFormatter().date(from: text) ?? precise.date(from: text)
     }
 
     /// Errors in words a user can act on. The technical detail stays in the debug log.
