@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { address, getPublicKeyFromAddress, isAddress, verifySignature, type Address, type SignatureBytes } from '@solana/kit';
 
-import { ROOT, badges, check, explorer, isFamily, issue, revoke, roles, sha256, verifyPresentation, type Roles } from './core.ts';
+import { ROOT, badges, check, explorer, isFamily, issue, librarySampleOffset, revoke, roles, sha256, verifyPresentation, type Roles } from './core.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -103,6 +103,16 @@ async function postAttestation(r: Roles, body: Record<string, unknown>) {
   // Sources mark proofs made through the user's own session as `<source>:owner`.
   if (!claim.data.source.endsWith(':owner') && !ALLOW_PUBLIC_PROOFS) {
     throw new HttpError(422, `proof does not show account ownership (source ${claim.data.source}): prove through your own session`);
+  }
+  // Apple Music: the library page must be the one the wallet and the day set (the proof's day, or the day
+  // before for a proof started around midnight UTC), so nobody picks a flattering page.
+  if (claim.schema === 'music.apple_listener v3') {
+    const proven = new Date(claim.data.proven_at);
+    const days = [proven, new Date(proven.getTime() - 86_400_000)].map((d) => d.toISOString().slice(0, 10));
+    const total = Number(claim.data.library_size);
+    if (!days.some((day) => librarySampleOffset(wallet, day, total) === Number(claim.data.sample_offset))) {
+      throw new HttpError(422, 'this library page is not the one set for this wallet today');
+    }
   }
   const age = (Date.now() - Date.parse(claim.data.proven_at)) / 1000;
   if (!(age >= 0 && age <= MAX_PROOF_AGE_S)) throw new HttpError(422, `proof is too old (${Math.round(age)} s, max ${MAX_PROOF_AGE_S} s)`);

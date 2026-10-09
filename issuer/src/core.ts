@@ -62,7 +62,7 @@ const FAMILIES = {
     },
   },
   'music.apple_listener': {
-    // v1: top artists and genre shares (never issued for real). v2: genre shares only.
+    // v1: top artists and genres (samples only). v2: genres of 15 recent plays. v3: genres of a library page.
     1: {
       description: 'Smart-SSI: Apple Music listener (top artists, genres), proven with TLSNotary',
       fields: ['claim', 'top_artists', 'genres', 'tracks', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
@@ -72,6 +72,11 @@ const FAMILIES = {
       description: 'Smart-SSI: Apple Music listener, the kinds of music played most, proven with TLSNotary',
       fields: ['claim', 'genres', 'tracks', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
       layout: [S.String, S.String, S.U16, S.String, S.String, S.String, S.String],
+    },
+    3: {
+      description: 'Smart-SSI: Apple Music listener, genres of a library sample set by the wallet and the day',
+      fields: ['claim', 'genres', 'tracks', 'library_size', 'sample_offset', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
+      layout: [S.String, S.String, S.U16, S.U32, S.U32, S.String, S.String, S.String, S.String],
     },
   },
 } as const;
@@ -335,6 +340,15 @@ export async function revoke(r: Roles, user: Address, family?: Family) {
     }
   }
   return result;
+}
+
+/** Apple Music library sample: the page offset is not the user's choice. sha256 of the wallet and the UTC day,
+ *  modulo the number of full pages; the phone computes it the same way (AppleMusicLogin.offset). */
+export const LIBRARY_PAGE = 100;
+export function librarySampleOffset(wallet: string, day: string, total: number) {
+  if (total <= LIBRARY_PAGE) return 0;
+  const digest = createHash('sha256').update(`smart-ssi:apple-library:${wallet}:${day}`).digest();
+  return Number(digest.readBigUInt64BE(0) % BigInt(total - LIBRARY_PAGE + 1));
 }
 
 export const isFamily = (name: unknown): name is Family => typeof name === 'string' && name in FAMILIES;

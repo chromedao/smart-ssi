@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MusicKit
 
@@ -8,6 +9,28 @@ enum AppleMusicLogin {
     enum Failure: LocalizedError {
         case denied
         var errorDescription: String? { "Smart-SSI needs access to Apple Music to see what you listen to." }
+    }
+
+    /// Songs in one library page (the API's maximum), and the page proven.
+    static let page = 100
+
+    /// The library page to prove is not the user's choice: sha256 of the wallet and the UTC day, modulo the number
+    /// of full pages. The issuer recomputes it (issuer/src/core.ts, librarySampleOffset) and refuses any other page.
+    static func offset(wallet: String, librarySize: Int, date: Date = Date()) -> UInt32 {
+        guard librarySize > page else { return 0 }
+        let day = ISO8601DateFormatter.string(from: date, timeZone: TimeZone(identifier: "UTC")!, formatOptions: [.withFullDate])
+        let digest = SHA256.hash(data: Data("smart-ssi:apple-library:\(wallet):\(day)".utf8))
+        let value = digest.prefix(8).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+        return UInt32(value % UInt64(librarySize - page + 1))
+    }
+
+    /// How many songs the library holds, to place the sample. Not proven: the proof reveals the real total, and
+    /// the issuer checks the page against it.
+    static func librarySize() async throws -> Int {
+        let url = URL(string: "https://api.music.apple.com/v1/me/library/songs?limit=1&fields[library-songs]=genreNames")!
+        let response = try await MusicDataRequest(urlRequest: URLRequest(url: url)).response()
+        let json = (try? JSONSerialization.jsonObject(with: response.data)) as? [String: Any]
+        return ((json?["meta"] as? [String: Any])?["total"] as? NSNumber)?.intValue ?? 0
     }
 
     static func tokens() async throws -> (developer: String, user: String) {

@@ -46,11 +46,12 @@ pub fn prove_github_public(login: String, notary: String) -> Result<GithubProof,
     prove(Subject::GithubPublic { login }, notary)
 }
 
-/// Prove what the user listens to from their recently played Apple Music tracks. Both tokens come from MusicKit
-/// on the phone; they never leave the MPC-TLS session (hidden in the presentation).
+/// Prove what the user listens to from one page of their Apple Music library, at `offset` (set by the wallet
+/// and the day, see `apple_library_offset`). Both tokens come from MusicKit on the phone; they never leave the
+/// MPC-TLS session (hidden in the presentation).
 #[uniffi::export]
-pub fn prove_apple_music(developer_token: String, user_token: String, notary: String) -> Result<GithubProof, ProveError> {
-    prove(Subject::AppleMusic { developer_token, user_token }, notary)
+pub fn prove_apple_music(developer_token: String, user_token: String, offset: u32, notary: String) -> Result<GithubProof, ProveError> {
+    prove(Subject::AppleMusic { developer_token, user_token, offset }, notary)
 }
 
 fn prove(subject: Subject, notary: String) -> Result<GithubProof, ProveError> {

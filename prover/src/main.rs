@@ -51,7 +51,8 @@ enum Command {
         /// Public GitHub account to prove facts about (development: does not prove ownership).
         /// Without it, proves the account of the OAuth token in $GITHUB_TOKEN.
         login: Option<String>,
-        /// Prove recently played Apple Music tracks, with $APPLE_MUSIC_DEVELOPER_TOKEN and $APPLE_MUSIC_USER_TOKEN.
+        /// Prove a page of the Apple Music library, with $APPLE_MUSIC_DEVELOPER_TOKEN, $APPLE_MUSIC_USER_TOKEN
+        /// and the page offset in $APPLE_MUSIC_OFFSET.
         #[arg(long)]
         apple_music: bool,
         /// Notary address: host:port (TCP) or ws:// / wss:// URL. Without it, an in-process notary with a development key is used.
@@ -90,6 +91,7 @@ async fn main() -> Result<()> {
                 _ if apple_music => Subject::AppleMusic {
                     developer_token: env("APPLE_MUSIC_DEVELOPER_TOKEN")?,
                     user_token: env("APPLE_MUSIC_USER_TOKEN")?,
+                    offset: env("APPLE_MUSIC_OFFSET")?.parse()?,
                 },
                 Some(login) => Subject::GithubPublic { login },
                 None => Subject::GithubDeveloper {
@@ -133,7 +135,7 @@ async fn prove(subject: &Subject, address: Option<String>, trust: Option<String>
     match subject {
         Subject::GithubDeveloper { .. } => println!("2/4 presented: the developer query and GitHub's answer revealed, the token hidden"),
         Subject::GithubPublic { .. } => println!("2/4 presented: only {} revealed", REVEALED_FIELDS.join(", ")),
-        Subject::AppleMusic { .. } => println!("2/4 presented: only each track's artist and genres revealed, the tokens hidden"),
+        Subject::AppleMusic { .. } => println!("2/4 presented: the library page (genres only) revealed, the tokens hidden"),
     }
 
     let revealed = verify(&presentation, trust.as_deref())?;

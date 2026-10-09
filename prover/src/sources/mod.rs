@@ -14,8 +14,8 @@ pub enum Subject {
     GithubDeveloper { token: String },
     /// Public facts about any GitHub account (`GET /users/<login>`): not ownership. Development only.
     GithubPublic { login: String },
-    /// What the user listens to: their recently played Apple Music tracks (MusicKit developer + user tokens).
-    AppleMusic { developer_token: String, user_token: String },
+    /// What the user listens to: a page of their Apple Music library at a set offset (MusicKit tokens).
+    AppleMusic { developer_token: String, user_token: String, offset: u32 },
 }
 
 impl std::fmt::Display for Subject {
@@ -23,7 +23,7 @@ impl std::fmt::Display for Subject {
         match self {
             Subject::GithubDeveloper { .. } => write!(f, "the token owner's GitHub developer profile"),
             Subject::GithubPublic { login } => write!(f, "public GitHub account {login}"),
-            Subject::AppleMusic { .. } => write!(f, "the user's recently played Apple Music tracks"),
+            Subject::AppleMusic { offset, .. } => write!(f, "a page of the user's Apple Music library at {offset}"),
         }
     }
 }
@@ -45,7 +45,7 @@ impl Subject {
         match self {
             Subject::GithubDeveloper { token } => github::developer_request(token),
             Subject::GithubPublic { login } => github::public_request(login),
-            Subject::AppleMusic { developer_token, user_token } => apple_music::request(developer_token, user_token),
+            Subject::AppleMusic { developer_token, user_token, offset } => apple_music::request(developer_token, user_token, *offset),
         }
     }
 }
@@ -64,14 +64,11 @@ pub enum Reveal {
     WholeResponse,
     /// These fields of the top-level JSON object.
     RootFields(&'static [&'static str]),
-    /// Every occurrence of these keys, at any depth (e.g. each track's artist), and nothing else.
-    KeysAnywhere(&'static [&'static str]),
 }
 
 pub fn reveal(host: &str, target: &str) -> Reveal {
     match host {
         github::HOST if target.starts_with("/users/") => Reveal::RootFields(&github::REVEALED_FIELDS),
-        apple_music::HOST => Reveal::KeysAnywhere(&apple_music::REVEALED_KEYS),
         _ => Reveal::WholeResponse,
     }
 }
@@ -118,16 +115,6 @@ fn dechunk(body: &str) -> Result<String> {
     }
 }
 
-/// Every revealed value of `key` in a partially revealed JSON answer: `"key":<value>` where both the key and
-/// its value were revealed (hidden bytes are `\0`, so a hidden value never parses).
-pub(crate) fn revealed_values(received: &str, key: &str) -> Vec<Value> {
-    let marker = format!("\"{key}\":");
-    received
-        .match_indices(&marker)
-        .filter_map(|(at, _)| serde_json::Deserializer::from_str(&received[at + marker.len()..]).into_iter::<Value>().next()?.ok())
-        .collect()
-}
-
 /// "A:62,B:21,C:9,Other:8": shares of the largest counts in percent (rounded, summing to 100), the rest as Other.
 pub fn shares(counts: &[(String, u64)], top: usize) -> String {
     let mut counts: Vec<(&str, u64)> = counts.iter().map(|(name, count)| (name.as_str(), *count)).filter(|(_, c)| *c > 0).collect();
@@ -144,13 +131,13 @@ pub fn shares(counts: &[(String, u64)], top: usize) -> String {
     if other > 0 {
         kept.push(("Other".into(), other));
     }
+    // Largest remainder: floor every share, then hand the missing points to the largest fractional parts.
     let mut percents: Vec<u64> = kept.iter().map(|(_, c)| c * 100 / total).collect();
-    // Hand out the rounding remainder to the largest shares so the total is 100.
-    let mut missing = 100 - percents.iter().sum::<u64>();
-    for p in percents.iter_mut() {
-        if missing == 0 { break }
-        *p += 1;
-        missing -= 1;
+    let mut by_remainder: Vec<usize> = (0..kept.len()).collect();
+    by_remainder.sort_by_key(|&i| std::cmp::Reverse(kept[i].1 * 100 % total));
+    let missing = 100 - percents.iter().sum::<u64>();
+    for &i in by_remainder.iter().take(missing as usize) {
+        percents[i] += 1;
     }
     kept.iter().zip(percents).filter(|(_, p)| *p > 0).map(|((name, _), p)| format!("{name}:{p}")).collect::<Vec<_>>().join(",")
 }

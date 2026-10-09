@@ -36,10 +36,13 @@ struct Facts {
     }
 }
 
-/// What an Apple Music listener badge says: the kinds of music played most, from recently played tracks.
+/// What an Apple Music listener badge says: the kinds of music in the user's library, from a sample page of it
+/// (or, for older badges, from recent plays).
 struct Listening {
     var genres: [(name: String, percent: Int)]
     var tracks: Int
+    /// Songs in the library; 0 for badges made from recent plays.
+    var librarySize = 0
 }
 
 /// The badge families the issuer knows (SAS schema names).
@@ -126,7 +129,7 @@ final class BadgeModel: ObservableObject {
                 badges = [
                     Badge(family: Family.github, kind: .developer(sample), verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"),
                     Badge(family: Family.appleMusic, kind: .listener(Listening(
-                          genres: [("Electronic", 55), ("Hip-Hop/Rap", 30), ("Pop", 15)], tracks: 30)), verifiedAt: Date(), attestation: "E39MShTEG2vhRTC64uPK345ZKWTndXaHGSfWyAwZrmyR"),
+                          genres: [("Electronic", 55), ("Hip-Hop/Rap", 30), ("Pop", 15)], tracks: 100, librarySize: 14555)), verifiedAt: Date(), attestation: "E39MShTEG2vhRTC64uPK345ZKWTndXaHGSfWyAwZrmyR"),
                 ]
             }
             #endif
@@ -223,7 +226,9 @@ final class BadgeModel: ObservableObject {
         signIn = Task {
             do {
                 let tokens = try await AppleMusicLogin.tokens()
-                prove { try proveAppleMusic(developerToken: tokens.developer, userToken: tokens.user, notary: $0) }
+                let offset = AppleMusicLogin.offset(wallet: walletAddress, librarySize: try await AppleMusicLogin.librarySize())
+                note("Apple Music library page at \(offset)")
+                prove { try proveAppleMusic(developerToken: tokens.developer, userToken: tokens.user, offset: offset, notary: $0) }
             } catch is CancellationError {
                 flow = nil
             } catch {
@@ -341,7 +346,8 @@ final class BadgeModel: ObservableObject {
     private static func listening(from data: [String: Any]) -> Listening {
         Listening(
             genres: shares(data["genres"] as? String),
-            tracks: (data["tracks"] as? NSNumber)?.intValue ?? 0
+            tracks: (data["tracks"] as? NSNumber)?.intValue ?? 0,
+            librarySize: (data["library_size"] as? NSNumber)?.intValue ?? 0
         )
     }
 
@@ -395,6 +401,7 @@ final class BadgeModel: ObservableObject {
             switch api.status {
             case 409: return "This proof was already used. Start again to make a new one."
             case 422 where api.message.contains("too old"): return "The proof expired before it was sent. Start again."
+            case 422 where api.message.contains("library page"): return "The library page changes with the day (UTC midnight). Start again."
             case 422 where api.message.contains("ownership"): return "This proof doesn't show that the GitHub account is yours. Sign in to GitHub and try again."
             case 422: return "Chrome DAO could not verify this proof. Start again; if it keeps failing, tell us on Discord."
             default: return "Chrome DAO's server did not answer as expected. Try again in a moment."
@@ -405,7 +412,7 @@ final class BadgeModel: ObservableObject {
         if text.contains("notary") || text.contains("connect") { return "Could not reach Chrome DAO's notary. Check your network and try again." }
         if text.contains("GitHub answered") { return "GitHub refused the request. Sign in again." }
         if text.contains("api.music.apple.com answered") { return "Apple Music refused the request. Check that your Apple Music subscription is active." }
-        if text.contains("tracks revealed") { return "Play a few more songs on Apple Music first: the badge needs at least 5 recently played tracks." }
+        if text.contains("tracks revealed") { return "Your Apple Music library needs at least 5 songs for a badge." }
         return "Something went wrong while proving. Try again."
     }
 }

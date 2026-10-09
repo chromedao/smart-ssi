@@ -419,7 +419,6 @@ fn disclosure(transcript: &HttpTranscript, host: &str) -> Result<Disclosure> {
                 recv.push(ranges(kv));
             }
         }
-        sources::Reveal::KeysAnywhere(keys) => collect_keys(&json_root(body)?, keys, &mut recv),
     }
     Ok(Disclosure { sent, recv })
 }
@@ -431,23 +430,6 @@ fn json_root(body: &tlsn_formats::http::Body) -> Result<JsonValue> {
         bail!("expected a JSON body");
     };
     Ok(document.root.clone())
-}
-
-/// Every `"key":value` pair whose key is in `keys`, at any depth, and nothing else.
-fn collect_keys(value: &JsonValue, keys: &[&str], out: &mut Vec<RangeSet<usize>>) {
-    match value {
-        JsonValue::Object(object) => {
-            for kv in &object.elems {
-                if keys.contains(&kv.key.view().as_str().trim_matches('"')) {
-                    out.push(ranges(kv));
-                } else {
-                    collect_keys(&kv.value, keys, out);
-                }
-            }
-        }
-        JsonValue::Array(array) => array.elems.iter().for_each(|element| collect_keys(element, keys, out)),
-        _ => {}
-    }
 }
 
 /// Step 3, issuer side: verify the presentation and read the revealed fields back.

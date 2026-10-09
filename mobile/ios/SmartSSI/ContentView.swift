@@ -166,10 +166,11 @@ private struct ListenerCard: View {
     let verifiedAt: Date?
 
     var body: some View {
-        CardFrame(domain: "music.apple.com", title: "Listener", subtitle: "Apple Music · \(listening.tracks) recent plays") {
-            if !listening.genres.isEmpty { ShareBar(title: "WHAT YOU PLAY", shares: listening.genres, color: genreColor(listening.genres)) }
+        CardFrame(domain: "music.apple.com", title: "Listener", subtitle: listening.librarySize > 0
+                  ? "Apple Music · library of \(listening.librarySize.formatted()) songs" : "Apple Music · \(listening.tracks) recent plays") {
+            if !listening.genres.isEmpty { ShareBar(title: listening.librarySize > 0 ? "WHAT YOU LISTEN TO" : "WHAT YOU PLAY", shares: listening.genres, color: genreColor(listening.genres)) }
             VStack(spacing: 0) {
-                FactRow(label: "Tracks counted", value: "\(listening.tracks)")
+                FactRow(label: listening.librarySize > 0 ? "Songs sampled" : "Tracks counted", value: "\(listening.tracks)")
                 if let verifiedAt { FactRow(label: "Verified", value: verifiedAt.formatted(date: .abbreviated, time: .omitted)) }
             }
             .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
@@ -366,15 +367,16 @@ private struct ListenerReview: View {
             Text("Proven from **Apple Music**").font(.callout).foregroundStyle(dim)
         }
         VStack(spacing: 0) {
-            FactRow(label: "Recent plays counted", value: "\(listening.tracks)")
+            FactRow(label: "Songs in your library", value: listening.librarySize.formatted())
+            FactRow(label: "Songs sampled", value: "\(listening.tracks)")
         }
         .background(card, in: RoundedRectangle(cornerRadius: 14))
         if !listening.genres.isEmpty {
-            ShareBar(title: "WHAT YOU PLAY", shares: listening.genres, color: genreColor(listening.genres))
+            ShareBar(title: "WHAT YOU LISTEN TO", shares: listening.genres, color: genreColor(listening.genres))
                 .padding(14)
                 .background(card, in: RoundedRectangle(cornerRadius: 14))
         }
-        Text("Nothing else: not the songs, artists, albums or playlists, not when you listened. Only the genre of each of your last 15 plays is read.")
+        Text("A sample of 100 songs from your library, at a place set by your wallet and the day, not chosen by you. Only each song's genre is read: not the titles, artists, albums or playlists.")
             .font(.callout).foregroundStyle(dim)
         PrimaryButton(title: "SHARE AND GET MY BADGE", action: issue)
         SecondaryButton(title: "DON'T SHARE", action: cancel)

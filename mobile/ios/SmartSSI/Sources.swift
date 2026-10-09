@@ -22,7 +22,7 @@ let sources: [Source] = [
     Source(id: "github", family: Family.github, name: "GitHub", domain: "github.com", badge: "Developer",
            shares: ["Username", "Coding since", "Contributions over 12 months", "Projects contributed to", "Languages of your public work"], status: .available),
     Source(id: "apple_music", family: Family.appleMusic, name: "Apple Music", domain: "music.apple.com", badge: "Listener",
-           shares: ["The genres you play most", "How many recent plays were counted"], status: .available),
+           shares: ["The genres in your library (a 100-song sample)", "How many songs your library holds"], status: .available),
     Source(id: "discord", name: "Discord", domain: "discord.com", badge: "CHROMES DAO member",
            shares: ["Member of the CHROMES DAO server", "Joined on", "Roles"], status: .proposed),
     Source(id: "strava", name: "Strava", domain: "strava.com", badge: "Regular athlete",
