@@ -1,0 +1,20 @@
+{
+  "name": "smart-ssi-verifier",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Smart-SSI web verifier: checks a badge shown as a QR code, in the browser, straight against Solana",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "tsx --test verify.test.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
