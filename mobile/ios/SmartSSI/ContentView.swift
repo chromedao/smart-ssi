@@ -166,7 +166,7 @@ private struct ListenerCard: View {
     let verifiedAt: Date?
 
     var body: some View {
-        CardFrame(domain: "music.apple.com", title: "Listener", subtitle: listening.topArtists.prefix(3).joined(separator: " · ")) {
+        CardFrame(domain: "music.apple.com", title: "Listener", subtitle: "Apple Music · \(listening.tracks) recent plays") {
             if !listening.genres.isEmpty { ShareBar(title: "WHAT YOU PLAY", shares: listening.genres, color: genreColor(listening.genres)) }
             VStack(spacing: 0) {
                 FactRow(label: "Tracks counted", value: "\(listening.tracks)")
@@ -366,8 +366,7 @@ private struct ListenerReview: View {
             Text("Proven from **Apple Music**").font(.callout).foregroundStyle(dim)
         }
         VStack(spacing: 0) {
-            FactRow(label: "Top artists", value: listening.topArtists.prefix(3).joined(separator: ", "))
-            FactRow(label: "Tracks counted", value: "\(listening.tracks)")
+            FactRow(label: "Recent plays counted", value: "\(listening.tracks)")
         }
         .background(card, in: RoundedRectangle(cornerRadius: 14))
         if !listening.genres.isEmpty {
@@ -375,7 +374,7 @@ private struct ListenerReview: View {
                 .padding(14)
                 .background(card, in: RoundedRectangle(cornerRadius: 14))
         }
-        Text("Nothing else: not the songs, albums or playlists, not when you listened. Only each recent track's artist and genre are read, from your last 15 plays.")
+        Text("Nothing else: not the songs, artists, albums or playlists, not when you listened. Only the genre of each of your last 15 plays is read.")
             .font(.callout).foregroundStyle(dim)
         PrimaryButton(title: "SHARE AND GET MY BADGE", action: issue)
         SecondaryButton(title: "DON'T SHARE", action: cancel)

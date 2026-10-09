@@ -91,7 +91,7 @@ struct ShowBadge: View {
     private var highlights: String {
         switch badge.kind {
         case .developer(let facts): facts.languages.filter { $0.name != "Other" }.prefix(3).map(\.name).joined(separator: " · ")
-        case .listener(let listening): listening.topArtists.prefix(3).joined(separator: " · ")
+        case .listener(let listening): listening.genres.filter { $0.name != "Other" }.prefix(3).map(\.name).joined(separator: " · ")
         }
     }
 

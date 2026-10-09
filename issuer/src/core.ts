@@ -62,11 +62,16 @@ const FAMILIES = {
     },
   },
   'music.apple_listener': {
-    // What the user listens to: top artists and genre shares from recently played Apple Music tracks.
+    // v1: top artists and genre shares (never issued for real). v2: genre shares only.
     1: {
       description: 'Smart-SSI: Apple Music listener (top artists, genres), proven with TLSNotary',
       fields: ['claim', 'top_artists', 'genres', 'tracks', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
       layout: [S.String, S.String, S.String, S.U16, S.String, S.String, S.String, S.String],
+    },
+    2: {
+      description: 'Smart-SSI: Apple Music listener, the kinds of music played most, proven with TLSNotary',
+      fields: ['claim', 'genres', 'tracks', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
+      layout: [S.String, S.String, S.U16, S.String, S.String, S.String, S.String],
     },
   },
 } as const;

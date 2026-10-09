@@ -36,9 +36,8 @@ struct Facts {
     }
 }
 
-/// What an Apple Music listener badge says: top artists and genre shares from recently played tracks.
+/// What an Apple Music listener badge says: the kinds of music played most, from recently played tracks.
 struct Listening {
-    var topArtists: [String]
     var genres: [(name: String, percent: Int)]
     var tracks: Int
 }
@@ -126,7 +125,7 @@ final class BadgeModel: ObservableObject {
                 sample.languages = [("TypeScript", 62), ("Rust", 21), ("Swift", 9), ("Other", 8)]
                 badges = [
                     Badge(family: Family.github, kind: .developer(sample), verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"),
-                    Badge(family: Family.appleMusic, kind: .listener(Listening(topArtists: ["Daft Punk", "Kendrick Lamar", "Justice"],
+                    Badge(family: Family.appleMusic, kind: .listener(Listening(
                           genres: [("Electronic", 55), ("Hip-Hop/Rap", 30), ("Pop", 15)], tracks: 30)), verifiedAt: Date(), attestation: "E39MShTEG2vhRTC64uPK345ZKWTndXaHGSfWyAwZrmyR"),
                 ]
             }
@@ -341,7 +340,6 @@ final class BadgeModel: ObservableObject {
 
     private static func listening(from data: [String: Any]) -> Listening {
         Listening(
-            topArtists: (data["top_artists"] as? String ?? "").split(separator: ",").map(String.init),
             genres: shares(data["genres"] as? String),
             tracks: (data["tracks"] as? NSNumber)?.intValue ?? 0
         )
