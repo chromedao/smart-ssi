@@ -13,4 +13,4 @@ compatible with Smart-SSI. You may not:
 A fork must use its own name, its own credential on the Solana Attestation Service and its own notary keys.
 Verifiers decide which credentials they trust: attestations issued by a fork are not Smart-SSI attestations.
 
-Questions: open an issue or ask on the [CHROMES DAO Discord](https://discord.gg/7TVqQF4GH).
+Questions: open an issue or ask on the [CHROMES DAO Discord](https://discord.gg/3yWKxcwp7Z).

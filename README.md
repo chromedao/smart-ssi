@@ -13,13 +13,13 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 1 | TLSNotary official example (notarize, present, verify) runs locally | Done |
 | 2 | Real source: prove facts about a GitHub account from `api.github.com` | Done |
 | 3a | Notary as its own TCP server with its own key; the issuer only accepts the trusted notary key | Done |
-| 3b | Proof of ownership: authenticated GitHub request ([#2](https://github.com/chromedao/smart-ssi/issues/2)) | Next |
+| 3b | Proof of ownership: authenticated GitHub request ([#2](https://github.com/chromedao/smart-ssi/issues/2)) | Done, tested on iPhone |
 | 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Done on devnet |
 | 3d | Issuer as an HTTP API, requests signed by the wallet, replay protection ([#3](https://github.com/chromedao/smart-ssi/issues/3)) | Done |
 | 4a | Prover library compiles for iOS (device, simulator) and Android; runs inside the iOS simulator against our notary | Done |
-| 4b | iOS app (SwiftUI + Rust via UniFFI): proof on the phone, wallet key in the Keychain, attestation through the issuer API ([#5](https://github.com/chromedao/smart-ssi/issues/5)) | Done, simulator |
+| 4b | iOS app (SwiftUI + Rust via UniFFI): proof on the phone, wallet key in the Keychain, attestation through the issuer API ([#5](https://github.com/chromedao/smart-ssi/issues/5)) | Done, real iPhone |
 | 4c | Android app (Compose + Rust via UniFFI), same flow ([#6](https://github.com/chromedao/smart-ssi/issues/6)) | Done, emulator |
-| 4d | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | Next |
+| 4d | Prover on a real iPhone and Android phone: time, memory, bandwidth ([#4](https://github.com/chromedao/smart-ssi/issues/4)) | iPhone 12 Pro (2020): full proof in 5.0 s over Wi-Fi. Android phone next |
 
 ## Run
 
@@ -160,7 +160,7 @@ The issuer never trusts the prover's `claim.json`: it verifies the presentation 
 | --- | --- |
 | Credential `SMART-SSI-DEV` | [BQCfMZ…Qs7F](https://explorer.solana.com/address/BQCfMZiKjQMQ6yddjkkDRPScpSMG828nQ45poAU9Qs7F?cluster=devnet) |
 | Schema `dev.github_account` v1 | [6oXVnT…f4mi](https://explorer.solana.com/address/6oXVnTQp7BWtgastgtMXQ8GLhMEJN6GifR5LSWG8f4mi?cluster=devnet) |
-| Demo attestation (`dev.not_yet` for `jeemclr`) | [6UEipa…bBb5](https://explorer.solana.com/address/6UEipaNupJtgRg4M7tizyPSqoJAK5LYxJ29b2niTbBb5?cluster=devnet) |
+| Demo attestation, issued from an iPhone (`dev.not_yet` for `jeemclr`, source `github:owner`) | [6wPLWi…FrsQu](https://explorer.solana.com/address/6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu?cluster=devnet) |
 
 Tested: issue then `check` → VALID; `revoke` then `check` → INVALID; a presentation signed by another notary is refused before anything is written on-chain.
 
@@ -171,7 +171,7 @@ Tested: issue then `check` → VALID; `revoke` then `check` → INVALID; a prese
 ## Limits of this step
 
 - The notary key is a local file. Production keeps it in a KMS or HSM (see ARCHITECTURE.md).
-- The GitHub request is unauthenticated: it proves public facts about an account, not that you own it. Ownership needs an authenticated request (OAuth token), next.
+- Proof of ownership goes through the user's own GitHub session (source `github:owner`). Proofs of a public profile (`api.github.com/users/<login>`) only show facts about an account, not that you own it: the issuer refuses them unless `ALLOW_PUBLIC_PROOFS=1` (development).
 
 ## License
 

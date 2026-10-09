@@ -37,4 +37,4 @@ let sources: [Source] = [
 let suggestSourceURL = URL(string: "https://github.com/chromedao/smart-ssi/issues/new?template=idea.yml")!
 let whitePaperURL = URL(string: "https://github.com/chromedao/smart-ssi-paper")!
 let sourceCodeURL = URL(string: "https://github.com/chromedao/smart-ssi")!
-let discordURL = URL(string: "https://discord.gg/7TVqQF4GH")!
+let discordURL = URL(string: "https://discord.gg/3yWKxcwp7Z")!
