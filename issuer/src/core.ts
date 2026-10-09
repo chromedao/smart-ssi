@@ -4,7 +4,7 @@
 // Rust binary, against the trusted notary key, before anything is written on-chain.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -200,8 +200,12 @@ export function verifyPresentation(presentation: Uint8Array): Claim {
     let lastError: unknown;
     for (const notaryPubkey of notaryPubkeys) {
       try {
-        const output = execFileSync(PROVER_BIN, ['verify', file, '--trust', notaryPubkey.trim()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-        return JSON.parse(output);
+        const result = spawnSync(PROVER_BIN, ['verify', file, '--trust', notaryPubkey.trim()], { encoding: 'utf8' });
+        if (result.status !== 0) throw Object.assign(new Error('verify failed'), { stderr: result.stderr });
+        // Sizes only (e.g. 'issuer sees 900 of 41230 received bytes'): how big each source's answers are.
+        const seen = result.stderr.match(/issuer sees \d+ of \d+ received bytes/)?.[0];
+        if (seen) console.log(`presentation for ${presentation.length} bytes: ${seen}`);
+        return JSON.parse(result.stdout);
       } catch (error) {
         lastError = error;
       }
