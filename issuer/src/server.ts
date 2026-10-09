@@ -1,12 +1,13 @@
 // Smart-SSI issuer API (prototype, Solana devnet).
 //
 //   GET    /health
-//   GET    /v1/attestations/:wallet   public: what any verifier calls
+//   GET    /v1/badges/:wallet         public: all of a wallet's valid badges, one per family
+//   GET    /v1/attestations/:wallet   public: the wallet's GitHub badge (older apps)
 //   POST   /v1/attestations           { wallet, presentation (base64), signature (base64) }
-//   DELETE /v1/attestations/:wallet   { timestamp (unix s), signature (base64) }
+//   DELETE /v1/attestations/:wallet   { timestamp (unix s), signature (base64), family? }
 //
 // The wallet proves it asked: it signs `smart-ssi:issue:<sha256(presentation)>` to get an attestation and
-// `smart-ssi:revoke:<wallet>:<timestamp>` to revoke it. A presentation is a bearer proof, so it is only
+// `smart-ssi:revoke:<wallet>:<timestamp>[:<family>]` to revoke it (all badges without a family). A presentation is a bearer proof, so it is only
 // accepted once and only while fresh.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ import { join } from 'node:path';
 
 import { address, getPublicKeyFromAddress, isAddress, verifySignature, type Address, type SignatureBytes } from '@solana/kit';
 
-import { ROOT, check, explorer, issue, revoke, roles, sha256, verifyPresentation, type Roles } from './core.ts';
+import { ROOT, badges, check, explorer, isFamily, issue, revoke, roles, sha256, verifyPresentation, type Roles } from './core.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -99,8 +100,9 @@ async function postAttestation(r: Roles, body: Record<string, unknown>) {
   } catch (error) {
     throw new HttpError(422, (error as Error).message);
   }
-  if (claim.data.source !== 'github:owner' && !ALLOW_PUBLIC_PROOFS) {
-    throw new HttpError(422, `proof does not show account ownership (source ${claim.data.source}): prove through your own GitHub session`);
+  // Sources mark proofs made through the user's own session as `<source>:owner`.
+  if (!claim.data.source.endsWith(':owner') && !ALLOW_PUBLIC_PROOFS) {
+    throw new HttpError(422, `proof does not show account ownership (source ${claim.data.source}): prove through your own session`);
   }
   const age = (Date.now() - Date.parse(claim.data.proven_at)) / 1000;
   if (!(age >= 0 && age <= MAX_PROOF_AGE_S)) throw new HttpError(422, `proof is too old (${Math.round(age)} s, max ${MAX_PROOF_AGE_S} s)`);
@@ -108,15 +110,17 @@ async function postAttestation(r: Roles, body: Record<string, unknown>) {
   const result = await serialized(() => issue(r, wallet, claim, presentation));
   markUsed(proofRef, wallet);
   if (result.movedFrom.length) console.log(`badge for GitHub account ${claim.data.github_id} moved from ${result.movedFrom.join(', ')} to ${wallet}`);
-  return { status: 201, body: { claim: claim.claim, attestation: result.attestation, explorer: explorer(result.attestation), transaction: result.signature, data: result.data, movedFrom: result.movedFrom } };
+  return { status: 201, body: { claim: claim.claim, family: result.family, attestation: result.attestation, explorer: explorer(result.attestation), transaction: result.signature, data: result.data, movedFrom: result.movedFrom } };
 }
 
 async function deleteAttestation(r: Roles, wallet: Address, body: Record<string, unknown>) {
   const timestamp = Number(body.timestamp);
   if (!Number.isInteger(timestamp)) throw new HttpError(400, 'timestamp is required (unix seconds)');
   if (Math.abs(Date.now() / 1000 - timestamp) > MAX_REVOKE_AGE_S) throw new HttpError(401, 'timestamp is too old or in the future');
-  await walletSigned(wallet, `smart-ssi:revoke:${wallet}:${timestamp}`, body.signature);
-  const result = await serialized(() => revoke(r, wallet));
+  const family = body.family;
+  if (family !== undefined && !isFamily(family)) throw new HttpError(400, 'unknown badge family');
+  await walletSigned(wallet, `smart-ssi:revoke:${wallet}:${timestamp}${family ? `:${family}` : ''}`, body.signature);
+  const result = await serialized(() => revoke(r, wallet, family));
   return { status: 200, body: { revoked: Boolean(result.signature), attestation: result.attestation, transaction: result.signature } };
 }
 
@@ -128,12 +132,14 @@ http
   .createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const match = url.pathname.match(/^\/v1\/attestations(?:\/([^/]+))?$/);
+    const badgesOf = url.pathname.match(/^\/v1\/badges\/([^/]+)$/);
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     };
     try {
       if (req.method === 'GET' && url.pathname === '/health') return reply(200, { ok: true, credential: r.credential, schema: r.schema });
+      if (req.method === 'GET' && badgesOf) return reply(200, { badges: await badges(r, parseWallet(badgesOf[1])) });
       if (!match) throw new HttpError(404, 'not found');
       if (req.method === 'GET' && match[1]) return reply(200, await check(r, parseWallet(match[1])));
       if (req.method === 'POST' && !match[1]) {
