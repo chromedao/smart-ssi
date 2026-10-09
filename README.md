@@ -164,6 +164,10 @@ The issuer never trusts the prover's `claim.json`: it verifies the presentation 
 
 Tested: issue then `check` → VALID; `revoke` then `check` → INVALID; a presentation signed by another notary is refused before anything is written on-chain.
 
+## Web verifier
+
+[`verifier/verify.ts`](verifier/verify.ts) is the code behind [chromedao.xyz/verify](https://www.chromedao.xyz/verify). It checks a badge shown as a QR code: the holder's signature made in the last 2 minutes, then the attestation read live from Solana (credential, schema, authorized signer, expiry). It runs in the visitor's browser, with no server in between. See [verifier/README.md](verifier/README.md).
+
 ## Limits of this step
 
 - The notary key is a local file. Production keeps it in a KMS or HSM (see ARCHITECTURE.md).
