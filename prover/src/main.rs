@@ -82,9 +82,9 @@ async fn main() -> Result<()> {
         }
         Command::Prove { login, notary: address, trust, out } => {
             let subject = match login {
-                Some(login) => Subject::Public { login },
+                Some(login) => Subject::GithubPublic { login },
                 // From the environment only: never on the command line, where shells and `ps` would keep it.
-                None => Subject::Owner {
+                None => Subject::GithubDeveloper {
                     token: std::env::var("GITHUB_TOKEN")
                         .map_err(|_| anyhow::anyhow!("give a login, or set GITHUB_TOKEN to prove your own account"))?,
                 },
@@ -123,8 +123,8 @@ async fn prove(subject: &Subject, address: Option<String>, trust: Option<String>
     let presentation = present(&attestation, &secrets)?;
     write(out, "presentation.tlsn", &presentation).await?;
     match subject {
-        Subject::Owner { .. } => println!("2/4 presented: the developer query and GitHub's answer revealed, the token hidden"),
-        Subject::Public { .. } => println!("2/4 presented: only {} revealed", REVEALED_FIELDS.join(", ")),
+        Subject::GithubDeveloper { .. } => println!("2/4 presented: the developer query and GitHub's answer revealed, the token hidden"),
+        Subject::GithubPublic { .. } => println!("2/4 presented: only {} revealed", REVEALED_FIELDS.join(", ")),
     }
 
     let revealed = verify(&presentation, trust.as_deref())?;

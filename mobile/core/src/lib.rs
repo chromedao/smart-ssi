@@ -37,13 +37,13 @@ impl From<anyhow::Error> for ProveError {
 /// `notary` (host:port for TCP, or a ws:// / wss:// URL). The token never leaves the MPC-TLS session.
 #[uniffi::export]
 pub fn prove_github_owner(token: String, notary: String) -> Result<GithubProof, ProveError> {
-    prove(Subject::Owner { token }, notary)
+    prove(Subject::GithubDeveloper { token }, notary)
 }
 
 /// Prove public facts about any GitHub account (development only: does not prove ownership).
 #[uniffi::export]
 pub fn prove_github_public(login: String, notary: String) -> Result<GithubProof, ProveError> {
-    prove(Subject::Public { login }, notary)
+    prove(Subject::GithubPublic { login }, notary)
 }
 
 fn prove(subject: Subject, notary: String) -> Result<GithubProof, ProveError> {
