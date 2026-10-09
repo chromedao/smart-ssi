@@ -5,6 +5,8 @@ struct Source: Identifiable {
     enum Status { case available, proposed }
 
     let id: String
+    /// The issuer's badge family for this source (SAS schema name); nil while proposed.
+    var family: String? = nil
     let name: String
     let domain: String
     /// The badge, in a few words.
@@ -14,11 +16,15 @@ struct Source: Identifiable {
     let status: Status
 }
 
-/// The catalog. Only GitHub is live; the others are candidates for phase 2 (5 to 10 sources,
+/// The catalog. GitHub and Apple Music are live; the others are candidates for phase 2 (5 to 10 sources,
 /// chromedao/smart-ssi#23): the DAO votes on which come next.
 let sources: [Source] = [
-    Source(id: "github", name: "GitHub", domain: "github.com", badge: "Developer",
-           shares: ["Username", "Number of public repositories", "Account creation date"], status: .available),
+    Source(id: "github", family: Family.github, name: "GitHub", domain: "github.com", badge: "Developer",
+           shares: ["Username", "Coding since", "Contributions over 12 months", "Projects contributed to", "Languages of your public work"], status: .available),
+    Source(id: "apple_music", family: Family.appleMusic, name: "Apple Music", domain: "music.apple.com", badge: "Listener",
+           shares: ["Top 3 artists", "Genres you play most", "Number of tracks counted"], status: .available),
+    Source(id: "discord", name: "Discord", domain: "discord.com", badge: "CHROMES DAO member",
+           shares: ["Member of the CHROMES DAO server", "Joined on", "Roles"], status: .proposed),
     Source(id: "strava", name: "Strava", domain: "strava.com", badge: "Regular athlete",
            shares: ["Activities per month", "Member since"], status: .proposed),
     Source(id: "steam", name: "Steam", domain: "steampowered.com", badge: "Gamer",

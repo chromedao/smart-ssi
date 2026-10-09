@@ -36,10 +36,30 @@ struct Facts {
     }
 }
 
-struct Badge {
-    var facts: Facts
+/// What an Apple Music listener badge says: top artists and genre shares from recently played tracks.
+struct Listening {
+    var topArtists: [String]
+    var genres: [(name: String, percent: Int)]
+    var tracks: Int
+}
+
+/// The badge families the issuer knows (SAS schema names).
+enum Family {
+    static let github = "dev.github_account"
+    static let appleMusic = "music.apple_listener"
+}
+
+enum BadgeKind {
+    case developer(Facts)
+    case listener(Listening)
+}
+
+struct Badge: Identifiable {
+    var family: String
+    var kind: BadgeKind
     var verifiedAt: Date?
     var attestation: String
+    var id: String { family }
     var explorer: URL? { URL(string: "https://explorer.solana.com/address/\(attestation)?cluster=devnet") }
 }
 
@@ -47,7 +67,7 @@ struct Badge {
 enum Flow {
     case signingIn(GitHubLogin.DeviceCode?)
     case proving
-    case review(GithubProof, Facts)
+    case review(GithubProof, BadgeKind)
     case issuing
     case done
     /// What to tell the user, and the technical cause (shown under Details, for bug reports).
@@ -61,10 +81,12 @@ let activeRule = "100+ contributions in the last 12 months, or contributions to 
 
 @MainActor
 final class BadgeModel: ObservableObject {
-    /// The wallet's badge on Solana; `loaded` turns true after the first check.
-    @Published var badge: Badge?
+    /// The wallet's badges on Solana, one per family; `loaded` turns true after the first read.
+    @Published var badges: [Badge] = []
     @Published var loaded = false
     @Published var removing = false
+    /// The family of the badge the last verification produced, for the Done screen.
+    @Published var justIssued: String?
     /// The verification in progress, shown full screen; nil when none.
     @Published var flow: Flow?
     @Published var tab = Tab.badges
@@ -102,8 +124,11 @@ final class BadgeModel: ObservableObject {
                 var sample = Facts(login: "octocat", accountAgeYears: 15, active: true)
                 (sample.version, sample.sinceYear, sample.yearsActive, sample.contributions12m, sample.reposContributed) = (2, 2014, 9, 640, 23)
                 sample.languages = [("TypeScript", 62), ("Rust", 21), ("Swift", 9), ("Other", 8)]
-                badge = (Badge(facts: sample,
-                                     verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"))
+                badges = [
+                    Badge(family: Family.github, kind: .developer(sample), verifiedAt: Date(), attestation: "6wPLWihEgk7ks9RHsbsEB72PrdtxrYp5uXB66oiFrsQu"),
+                    Badge(family: Family.appleMusic, kind: .listener(Listening(topArtists: ["Daft Punk", "Kendrick Lamar", "Justice"],
+                          genres: [("Electronic", 55), ("Hip-Hop/Rap", 30), ("Pop", 15)], tracks: 30)), verifiedAt: Date(), attestation: "E39MShTEG2vhRTC64uPK345ZKWTndXaHGSfWyAwZrmyR"),
+                ]
             }
             #endif
         }
@@ -113,22 +138,19 @@ final class BadgeModel: ObservableObject {
 
     // MARK: Badge on Solana
 
-    /// Reads the wallet's badge from Solana (through the issuer API's public check).
+    /// Reads the wallet's badges from Solana (through the issuer API's public read).
     func refresh() async {
         guard let client else { loaded = true; return note("no wallet") }
         do {
-            let json = try await client.check()
-            note("check: valid=\(json["valid"] ?? "?")")
-            if json["valid"] as? Bool == true, let data = json["data"] as? [String: Any], let attestation = json["attestation"] as? String {
-                badge = Badge(facts: Self.facts(fromAttestation: data), verifiedAt: Self.date(data["proven_at"]), attestation: attestation)
-            } else {
-                badge = nil
-            }
+            badges = try await client.badges().compactMap(Self.badge)
+            note("badges: \(badges.map(\.family))")
         } catch {
-            note("check failed: \(error)")
+            note("badges failed: \(error)")
         }
         loaded = true
     }
+
+    func badge(_ family: String) -> Badge? { badges.first { $0.family == family } }
 
     func issue(_ proof: GithubProof) {
         guard let client else { return }
@@ -137,6 +159,7 @@ final class BadgeModel: ObservableObject {
             do {
                 let json = try await client.issue(presentation: proof.presentation)
                 note("issued: \(json["attestation"] ?? "?")")
+                justIssued = json["family"] as? String
                 await refresh()
                 flow = .done
             } catch {
@@ -152,15 +175,15 @@ final class BadgeModel: ObservableObject {
         flow = nil
     }
 
-    func removeBadge() {
+    func removeBadge(_ family: String) {
         guard let client else { return }
         removing = true
         Task {
             defer { removing = false }
             do {
-                _ = try await client.revoke()
-                note("revoked")
-                badge = nil
+                _ = try await client.revoke(family: family)
+                note("revoked \(family)")
+                badges.removeAll { $0.family == family }
             } catch {
                 note("revoke failed: \(error)")
             }
@@ -170,12 +193,13 @@ final class BadgeModel: ObservableObject {
     /// The link a QR code carries: the wallet signs `smart-ssi:show:<wallet>:<unix time>`, so the page knows the
     /// person showing it holds the badge right now. Everything is in the fragment, which browsers never send to a
     /// server. The page refuses codes older than 2 minutes; the app renews them every 30 seconds.
-    func showLink() -> URL? {
+    func showLink(_ family: String) -> URL? {
         guard let wallet else { return nil }
         let time = Int(Date().timeIntervalSince1970)
         guard let signature = try? wallet.sign("smart-ssi:show:\(wallet.address):\(time)") else { return nil }
         let base64url = signature.replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        return URL(string: "\(verifyURL)#w=\(wallet.address)&t=\(time)&s=\(base64url)")
+        // `b`: which badge to feature on the page (not signed: the page shows only what is on Solana anyway).
+        return URL(string: "\(verifyURL)#w=\(wallet.address)&t=\(time)&s=\(base64url)&b=\(family)")
     }
 
     private var client: IssuerClient? {
@@ -183,9 +207,34 @@ final class BadgeModel: ObservableObject {
         return IssuerClient(baseURL: url, wallet: wallet)
     }
 
-    // MARK: GitHub sign-in and proof
+    // MARK: Sign-in and proof
 
-    func start() {
+    /// Starts a verification from a source of the catalog (Sources.swift).
+    func start(_ source: String) {
+        switch source {
+        case "apple_music": startAppleMusic()
+        default: startGitHub()
+        }
+    }
+
+    /// Apple Music: the system's MusicKit prompt, then the proof. No sign-in page.
+    private func startAppleMusic() {
+        wakeNotary()
+        flow = .proving
+        signIn = Task {
+            do {
+                let tokens = try await AppleMusicLogin.tokens()
+                prove { try proveAppleMusic(developerToken: tokens.developer, userToken: tokens.user, notary: $0) }
+            } catch is CancellationError {
+                flow = nil
+            } catch {
+                note("Apple Music access failed: \(error)")
+                flow = .failed(Self.explain(error), "\(error)")
+            }
+        }
+    }
+
+    private func startGitHub() {
         wakeNotary()
         flow = .signingIn(nil)
         signIn = Task {
@@ -250,7 +299,7 @@ final class BadgeModel: ObservableObject {
                     self.note(String(format: "proof done in %.1f s, %d bytes", proof.seconds, proof.presentation.count))
                     // Cancelled while proving: drop the proof.
                     guard self.flow != nil else { return }
-                    self.flow = .review(proof, Self.facts(fromProof: proof))
+                    self.flow = .review(proof, Self.kind(fromProof: proof))
                 case .failure(let error):
                     self.note("proof failed: \(error)")
                     if self.flow != nil { self.flow = .failed(Self.explain(error), "\(error)") }
@@ -268,15 +317,43 @@ final class BadgeModel: ObservableObject {
 
     // MARK: Reading proofs and attestations
 
-    private static func facts(fromProof proof: GithubProof) -> Facts {
+    private static func kind(fromProof proof: GithubProof) -> BadgeKind {
         let claim = json(proof.claimJson), revealed = json(proof.revealedJson)
-        var facts = facts(from: claim["data"] as? [String: Any] ?? [:], claim: claim["claim"] as? String)
+        let data = claim["data"] as? [String: Any] ?? [:]
+        if (claim["claim"] as? String) == "music.listener" { return .listener(listening(from: data)) }
+        var facts = facts(from: data, claim: claim["claim"] as? String)
         facts.createdAt = date(revealed["created_at"])
-        return facts
+        return .developer(facts)
     }
 
-    private static func facts(fromAttestation data: [String: Any]) -> Facts {
-        facts(from: data, claim: data["claim"] as? String)
+    /// A badge from the issuer's `/v1/badges` answer.
+    private static func badge(_ entry: [String: Any]) -> Badge? {
+        guard let family = entry["family"] as? String, let data = entry["data"] as? [String: Any],
+              let attestation = entry["attestation"] as? String else { return nil }
+        let kind: BadgeKind
+        switch family {
+        case Family.github: kind = .developer(facts(from: data, claim: data["claim"] as? String))
+        case Family.appleMusic: kind = .listener(listening(from: data))
+        default: return nil
+        }
+        return Badge(family: family, kind: kind, verifiedAt: date(data["proven_at"]), attestation: attestation)
+    }
+
+    private static func listening(from data: [String: Any]) -> Listening {
+        Listening(
+            topArtists: (data["top_artists"] as? String ?? "").split(separator: ",").map(String.init),
+            genres: shares(data["genres"] as? String),
+            tracks: (data["tracks"] as? NSNumber)?.intValue ?? 0
+        )
+    }
+
+    /// "A:62,B:21" → [(A, 62), (B, 21)].
+    static func shares(_ text: String?) -> [(name: String, percent: Int)] {
+        (text ?? "").split(separator: ",").compactMap { entry in
+            let parts = entry.split(separator: ":")
+            guard parts.count == 2, let percent = Int(parts[1]) else { return nil }
+            return (String(parts[0]), percent)
+        }
     }
 
     /// Reads v1 (public_repos) and v2 (since_year, languages…) badge data alike.
@@ -295,11 +372,7 @@ final class BadgeModel: ObservableObject {
             facts.yearsActive = number("years_active")
             facts.contributions12m = number("contributions_12m")
             facts.reposContributed = number("repos_contributed")
-            facts.languages = (data["languages"] as? String ?? "").split(separator: ",").compactMap { entry in
-                let parts = entry.split(separator: ":")
-                guard parts.count == 2, let percent = Int(parts[1]) else { return nil }
-                return (String(parts[0]), percent)
-            }
+            facts.languages = shares(data["languages"] as? String)
         }
         return facts
     }
@@ -316,6 +389,7 @@ final class BadgeModel: ObservableObject {
     /// Errors in words a user can act on. The technical detail stays in the debug log.
     static func explain(_ error: Error) -> String {
         if let failure = error as? GitHubLogin.Failure { return failure.localizedDescription }
+        if let failure = error as? AppleMusicLogin.Failure { return failure.localizedDescription }
         if let api = error as? IssuerClient.APIError {
             switch api.status {
             case 409: return "This proof was already used. Start again to make a new one."
@@ -329,6 +403,8 @@ final class BadgeModel: ObservableObject {
         let text = "\(error)"
         if text.contains("notary") || text.contains("connect") { return "Could not reach Chrome DAO's notary. Check your network and try again." }
         if text.contains("GitHub answered") { return "GitHub refused the request. Sign in again." }
+        if text.contains("api.music.apple.com answered") { return "Apple Music refused the request. Check that your Apple Music subscription is active." }
+        if text.contains("tracks revealed") { return "Play a few more songs on Apple Music first: the badge needs at least 5 recently played tracks." }
         return "Something went wrong while proving. Try again."
     }
 }

@@ -49,36 +49,41 @@ private struct Page<Content: View>: View {
 
 private struct BadgesTab: View {
     @ObservedObject var model: BadgeModel
-    @State private var showing = false
+    @State private var showing: Badge?
 
     var body: some View {
         Page(title: "Badges") {
             if !model.loaded {
                 Waiting(title: "", detail: "Looking for your badges on Solana…")
-            } else if let badge = model.badge {
-                Button { showing = true } label: { BadgeCard(badge: badge) }.buttonStyle(.plain)
-                PrimaryButton(title: "SHOW TO SOMEONE") { showing = true }
-                Text("A QR code they scan with their camera: their browser says yes or no.").font(.caption).foregroundStyle(dim)
-                BadgeActions(badge: badge, model: model)
-            } else {
+            } else if model.badges.isEmpty {
                 VStack(alignment: .leading, spacing: 14) {
                     Image(systemName: "checkmark.seal").font(.system(size: 44)).foregroundStyle(dim)
                     Text("No badge yet").font(.title2.monospaced().bold())
-                    Text("A badge proves something about you (that you're a developer, an athlete…) without sharing the account behind it. Apps and DAO votes check it directly.")
+                    Text("A badge proves something about you (that you're a developer, what you listen to…) without sharing the account behind it. Apps and DAO votes check it directly.")
                         .foregroundStyle(dim)
                     PrimaryButton(title: "GET MY FIRST BADGE") { model.tab = .sources }
                 }
                 .padding(.top, 8)
+            } else {
+                ForEach(model.badges) { badge in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button { showing = badge } label: { BadgeCard(badge: badge) }.buttonStyle(.plain)
+                        PrimaryButton(title: "SHOW TO SOMEONE") { showing = badge }
+                        BadgeActions(badge: badge, model: model)
+                    }
+                    .padding(.bottom, 14)
+                }
+                Text("Public on Solana: apps and DAO votes check your badges directly, without asking Chrome DAO and without seeing your accounts.")
+                    .font(.callout).foregroundStyle(dim)
+                SecondaryButton(title: "ADD A BADGE") { model.tab = .sources }
             }
             #if DEBUG
             DevelopmentPanel(model: model)
             #endif
         }
         .refreshable { await model.refresh() }
-        .fullScreenCover(isPresented: $showing) {
-            if let badge = model.badge {
-                ShowBadge(badge: badge, link: model.showLink, close: { showing = false })
-            }
+        .fullScreenCover(item: $showing) { badge in
+            ShowBadge(badge: badge, link: { model.showLink(badge.family) }, close: { showing = nil })
         }
     }
 }
@@ -87,45 +92,88 @@ private struct BadgeCard: View {
     let badge: Badge
 
     var body: some View {
+        switch badge.kind {
+        case .developer(let facts): DeveloperCard(facts: facts, verifiedAt: badge.verifiedAt)
+        case .listener(let listening): ListenerCard(listening: listening, verifiedAt: badge.verifiedAt)
+        }
+    }
+}
+
+/// Card frame shared by every badge: source icon with a seal, title, subtitle, then the badge's own content.
+private struct CardFrame<Content: View>: View {
+    let domain: String
+    let title: String
+    let subtitle: String
+    var highlighted = true
+    @ViewBuilder let content: Content
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
-                SourceIcon(domain: badge.facts.sourceDomain, size: 52)
+                SourceIcon(domain: domain, size: 52)
                     .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: badge.facts.active ? "checkmark.seal.fill" : "checkmark.circle.fill")
-                            .font(.system(size: 20)).foregroundStyle(badge.facts.active ? green : dim)
+                        Image(systemName: highlighted ? "checkmark.seal.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 20)).foregroundStyle(highlighted ? green : dim)
                             .background(Circle().fill(Color.black).padding(2))
                             .offset(x: 6, y: 6)
                     }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(badge.facts.title).font(.title3.monospaced().bold())
-                    Text("@\(badge.facts.login) · GitHub").font(.callout.monospaced()).foregroundStyle(dim)
+                    Text(title).font(.title3.monospaced().bold())
+                    Text(subtitle).font(.callout.monospaced()).foregroundStyle(dim)
                 }
             }
-            if badge.facts.version == 2 {
-                if !badge.facts.languages.isEmpty { LanguageBar(languages: badge.facts.languages) }
+            content
+        }
+        .padding(18)
+        .background(card, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(highlighted ? green.opacity(0.6) : .clear, lineWidth: 1))
+    }
+}
+
+private struct DeveloperCard: View {
+    let facts: Facts
+    let verifiedAt: Date?
+
+    var body: some View {
+        CardFrame(domain: facts.sourceDomain, title: facts.title, subtitle: "@\(facts.login) · GitHub", highlighted: facts.active) {
+            if facts.version == 2 {
+                if !facts.languages.isEmpty { LanguageBar(languages: facts.languages) }
                 VStack(spacing: 0) {
-                    FactRow(label: "Coding since", value: "\(badge.facts.sinceYear)")
-                    FactRow(label: "Contributions, 12 months", value: badge.facts.contributions12m.formatted())
-                    FactRow(label: "Projects contributed to", value: "\(badge.facts.reposContributed)")
-                    if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
+                    FactRow(label: "Coding since", value: "\(facts.sinceYear)")
+                    FactRow(label: "Contributions, 12 months", value: facts.contributions12m.formatted())
+                    FactRow(label: "Projects contributed to", value: "\(facts.reposContributed)")
+                    if let verifiedAt { FactRow(label: "Verified", value: verifiedAt.formatted(date: .abbreviated, time: .omitted)) }
                 }
                 .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
             } else {
-                if !badge.facts.active {
+                if !facts.active {
                     Text("Update your badge: the new GitHub badge counts your contributions to every project, your languages and since when you code.")
                         .font(.callout).foregroundStyle(dim)
                 }
                 VStack(spacing: 0) {
-                    FactRow(label: "Public repositories", value: "\(badge.facts.publicRepos)")
-                    FactRow(label: "Account age", value: badge.facts.accountAgeYears == 1 ? "1 year" : "\(badge.facts.accountAgeYears) years")
-                    if let date = badge.verifiedAt { FactRow(label: "Verified", value: date.formatted(date: .abbreviated, time: .omitted)) }
+                    FactRow(label: "Public repositories", value: "\(facts.publicRepos)")
+                    FactRow(label: "Account age", value: facts.accountAgeYears == 1 ? "1 year" : "\(facts.accountAgeYears) years")
+                    if let verifiedAt { FactRow(label: "Verified", value: verifiedAt.formatted(date: .abbreviated, time: .omitted)) }
                 }
                 .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(18)
-        .background(card, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(badge.facts.active ? green.opacity(0.6) : .clear, lineWidth: 1))
+    }
+}
+
+private struct ListenerCard: View {
+    let listening: Listening
+    let verifiedAt: Date?
+
+    var body: some View {
+        CardFrame(domain: "music.apple.com", title: "Listener", subtitle: listening.topArtists.prefix(3).joined(separator: " · ")) {
+            if !listening.genres.isEmpty { ShareBar(title: "WHAT YOU PLAY", shares: listening.genres, color: genreColor(listening.genres)) }
+            VStack(spacing: 0) {
+                FactRow(label: "Tracks counted", value: "\(listening.tracks)")
+                if let verifiedAt { FactRow(label: "Verified", value: verifiedAt.formatted(date: .abbreviated, time: .omitted)) }
+            }
+            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+        }
     }
 }
 
@@ -135,20 +183,20 @@ private struct BadgeActions: View {
     @State private var confirmRemove = false
 
     var body: some View {
-        Text("Public on Solana: apps and DAO votes check it directly, without asking Chrome DAO and without seeing your GitHub account.")
-            .font(.callout).foregroundStyle(dim)
+        HStack {
+            SecondaryButton(title: "UPDATE") { model.start(sources.first { $0.family == badge.family }?.id ?? "github") }
+            SecondaryButton(title: model.removing ? "…" : "REMOVE") { confirmRemove = true }
+                .disabled(model.removing)
+                .confirmationDialog("Remove this badge?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                    Button("Remove", role: .destructive) { model.removeBadge(badge.family) }
+                } message: {
+                    Text("Apps will no longer see it. You can get it again at any time.")
+                }
+        }
         if let url = badge.explorer {
             Link(destination: url) { Label("See it on Solana (test network)", systemImage: "arrow.up.right.square") }
-                .font(.callout).tint(green)
+                .font(.caption).tint(green)
         }
-        SecondaryButton(title: "UPDATE", action: model.start)
-        SecondaryButton(title: model.removing ? "REMOVING…" : "REMOVE") { confirmRemove = true }
-            .disabled(model.removing)
-            .confirmationDialog("Remove your badge?", isPresented: $confirmRemove, titleVisibility: .visible) {
-                Button("Remove", role: .destructive, action: model.removeBadge)
-            } message: {
-                Text("Apps will no longer see you as verified. You can get a new badge at any time.")
-            }
     }
 }
 
@@ -162,7 +210,7 @@ private struct SourcesTab: View {
             Text("Prove something from an account you already have. Your phone checks it; only the facts listed are shared, after you agree.")
                 .foregroundStyle(dim)
             ForEach(sources.filter { $0.status == .available }) { source in
-                SourceRow(source: source, verified: model.badge != nil, action: model.start)
+                SourceRow(source: source, verified: source.family.flatMap(model.badge) != nil, action: { model.start(source.id) })
             }
             Text("COMING NEXT").font(.caption.monospaced()).foregroundStyle(green).padding(.top, 8)
             Text("Candidates for the next sources. Chrome holders vote on which come first.").font(.callout).foregroundStyle(dim)
@@ -286,20 +334,51 @@ private struct VerifyFlow: View {
             Steps(current: 2)
             Waiting(
                 title: "Checking your account",
-                detail: "Your phone reads your profile straight from GitHub. Chrome DAO's notary co-signs the exchange without seeing it. About 10 seconds; on mobile data it sends around 25 MB."
+                detail: "Your phone reads your account straight from the source. Chrome DAO's notary co-signs the exchange without seeing it. About 10 seconds; on mobile data it sends around 25 MB."
             )
-        case .review(let proof, let facts):
+        case .review(let proof, .developer(let facts)):
             Review(facts: facts, issue: { model.issue(proof) }, cancel: model.cancel)
+        case .review(let proof, .listener(let listening)):
+            ListenerReview(listening: listening, issue: { model.issue(proof) }, cancel: model.cancel)
         case .issuing:
             Steps(current: 3)
             Waiting(title: "Recording your badge", detail: "Writing it on Solana, where anyone can check it.")
         case .done:
-            Done(badge: model.badge, close: model.finish)
+            Done(badge: model.justIssued.flatMap(model.badge), close: model.finish)
         case .failed(let message, let detail):
             Failed(message: message, detail: detail, retry: model.cancel)
         case .none:
             EmptyView()
         }
+    }
+}
+
+private struct ListenerReview: View {
+    let listening: Listening
+    let issue: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        Steps(current: 3)
+        Text("Here's everything Chrome DAO will receive").font(.title2.monospaced().bold())
+        HStack(spacing: 10) {
+            SourceIcon(domain: "music.apple.com", size: 28)
+            Text("Proven from **Apple Music**").font(.callout).foregroundStyle(dim)
+        }
+        VStack(spacing: 0) {
+            FactRow(label: "Top artists", value: listening.topArtists.prefix(3).joined(separator: ", "))
+            FactRow(label: "Tracks counted", value: "\(listening.tracks)")
+        }
+        .background(card, in: RoundedRectangle(cornerRadius: 14))
+        if !listening.genres.isEmpty {
+            ShareBar(title: "WHAT YOU PLAY", shares: listening.genres, color: genreColor(listening.genres))
+                .padding(14)
+                .background(card, in: RoundedRectangle(cornerRadius: 14))
+        }
+        Text("Nothing else: not the songs, albums or playlists, not when you listened. Only each recent track's artist and genre are read, from your last 30 plays.")
+            .font(.callout).foregroundStyle(dim)
+        PrimaryButton(title: "SHARE AND GET MY BADGE", action: issue)
+        SecondaryButton(title: "DON'T SHARE", action: cancel)
     }
 }
 
@@ -457,13 +536,32 @@ func languageColor(_ name: String) -> Color {
     return Color(red: Double(value >> 16 & 0xff) / 255, green: Double(value >> 8 & 0xff) / 255, blue: Double(value & 0xff) / 255)
 }
 
-/// What the user codes, by their own commits: one stacked bar, then each language with its share.
+/// What the user codes, by their own commits.
 struct LanguageBar: View {
     let languages: [(name: String, percent: Int)]
+    var body: some View { ShareBar(title: "WHAT YOU CODE · PUBLIC PROJECTS", shares: languages, color: languageColor) }
+}
+
+/// Genre colors by rank (largest first), so two genres never share a color; Other stays gray.
+private let rankPalette: [Color] = [green, Color(red: 0.2, green: 0.6, blue: 1), Color(red: 1, green: 0.4, blue: 0.6), Color(red: 1, green: 0.75, blue: 0.2)]
+func genreColor(_ shares: [(name: String, percent: Int)]) -> (String) -> Color {
+    { name in
+        guard name != "Other", let rank = shares.firstIndex(where: { $0.name == name }) else { return .gray }
+        return rankPalette[rank % rankPalette.count]
+    }
+}
+
+/// One stacked bar, then each entry with its share.
+struct ShareBar: View {
+    let title: String
+    let shares: [(name: String, percent: Int)]
+    let color: (String) -> Color
 
     var body: some View {
+        let languages = shares
+        let languageColor = color
         VStack(alignment: .leading, spacing: 10) {
-            Text("WHAT YOU CODE · PUBLIC PROJECTS").font(.caption2.monospaced()).foregroundStyle(dim)
+            Text(title).font(.caption2.monospaced()).foregroundStyle(dim)
             GeometryReader { geometry in
                 HStack(spacing: 2) {
                     ForEach(languages, id: \.name) { language in

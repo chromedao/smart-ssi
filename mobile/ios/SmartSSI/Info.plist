@@ -29,6 +29,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Smart-SSI reads the artist and genre of your recently played tracks to make your listener badge. Song titles and albums stay on your phone.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Smart-SSI connects to a development notary and issuer on your local network.</string>
 	<key>UILaunchScreen</key>

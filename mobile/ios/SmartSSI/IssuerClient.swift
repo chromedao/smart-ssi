@@ -20,14 +20,16 @@ struct IssuerClient {
         ])
     }
 
-    func check() async throws -> [String: Any] {
-        try await send("GET", "/v1/attestations/\(wallet.address)", nil)
+    /// All of the wallet's valid badges, one per family, as read from Solana.
+    func badges() async throws -> [[String: Any]] {
+        try await send("GET", "/v1/badges/\(wallet.address)", nil)["badges"] as? [[String: Any]] ?? []
     }
 
-    func revoke() async throws -> [String: Any] {
+    /// Removes the badge of one family (the family is part of the signed message).
+    func revoke(family: String) async throws -> [String: Any] {
         let timestamp = Int(Date().timeIntervalSince1970)
-        let signature = try wallet.sign("smart-ssi:revoke:\(wallet.address):\(timestamp)")
-        return try await send("DELETE", "/v1/attestations/\(wallet.address)", ["timestamp": timestamp, "signature": signature])
+        let signature = try wallet.sign("smart-ssi:revoke:\(wallet.address):\(timestamp):\(family)")
+        return try await send("DELETE", "/v1/attestations/\(wallet.address)", ["timestamp": timestamp, "signature": signature, "family": family])
     }
 
     private func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> [String: Any] {

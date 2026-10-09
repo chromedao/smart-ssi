@@ -28,13 +28,10 @@ struct ShowBadge: View {
                 }
 
                 VStack(spacing: 6) {
-                    Text(badge.facts.title)
-                        .font(.title.monospaced().bold()).multilineTextAlignment(.center)
-                    Text(badge.facts.version == 2 ? "@\(badge.facts.login) · coding since \(badge.facts.sinceYear)" : "@\(badge.facts.login) · GitHub")
-                        .font(.callout.monospaced()).foregroundStyle(dim)
-                    if badge.facts.version == 2, !badge.facts.languages.isEmpty {
-                        Text(badge.facts.languages.filter { $0.name != "Other" }.prefix(3).map(\.name).joined(separator: " · "))
-                            .font(.callout.monospaced().bold()).foregroundStyle(green)
+                    Text(title).font(.title.monospaced().bold()).multilineTextAlignment(.center)
+                    Text(subtitle).font(.callout.monospaced()).foregroundStyle(dim)
+                    if !highlights.isEmpty {
+                        Text(highlights).font(.callout.monospaced().bold()).foregroundStyle(green).multilineTextAlignment(.center)
                     }
                 }
 
@@ -73,6 +70,28 @@ struct ShowBadge: View {
         }
         .onDisappear {
             if let previousBrightness { UIScreen.main.brightness = previousBrightness }
+        }
+    }
+
+    private var title: String {
+        switch badge.kind {
+        case .developer(let facts): facts.title
+        case .listener: "Listener"
+        }
+    }
+
+    private var subtitle: String {
+        switch badge.kind {
+        case .developer(let facts): facts.version == 2 ? "@\(facts.login) · coding since \(facts.sinceYear)" : "@\(facts.login) · GitHub"
+        case .listener(let listening): "Apple Music · \(listening.tracks) tracks"
+        }
+    }
+
+    /// Top languages or top artists, the line people read first.
+    private var highlights: String {
+        switch badge.kind {
+        case .developer(let facts): facts.languages.filter { $0.name != "Other" }.prefix(3).map(\.name).joined(separator: " · ")
+        case .listener(let listening): listening.topArtists.prefix(3).joined(separator: " · ")
         }
     }
 
