@@ -10,8 +10,8 @@ use serde_json::{Map, Value, json};
 use super::{HttpRequest, request_parts, revealed_values, shares};
 
 pub const HOST: &str = "api.music.apple.com";
-/// The last 30 tracks played (the endpoint's maximum).
-pub const PATH: &str = "/v1/me/recent/played/tracks?limit=30";
+/// The last 15 tracks played: enough to tell a taste, and an answer small enough for a phone to prove.
+pub const PATH: &str = "/v1/me/recent/played/tracks?limit=15";
 pub const REVEALED_KEYS: [&str; 2] = ["artistName", "genreNames"];
 /// Fewer tracks than this says too little about someone's taste.
 const MIN_TRACKS: usize = 5;
@@ -24,8 +24,9 @@ pub fn request(developer_token: &str, user_token: &str) -> HttpRequest {
         path: PATH.into(),
         headers: vec![("Authorization", format!("Bearer {developer_token}")), ("Music-User-Token", user_token.into())],
         body: None,
-        // 30 tracks with their attributes: ~60-90 KB. Received data is decrypted after the session.
-        max_recv: 1 << 17,
+        // 15 tracks with their attributes: ~25-40 KB. Received data is decrypted after the session, in a
+        // zero-knowledge proof the phone computes, so it is kept tight too.
+        max_recv: 1 << 16,
     }
 }
 

@@ -375,7 +375,7 @@ private struct ListenerReview: View {
                 .padding(14)
                 .background(card, in: RoundedRectangle(cornerRadius: 14))
         }
-        Text("Nothing else: not the songs, albums or playlists, not when you listened. Only each recent track's artist and genre are read, from your last 30 plays.")
+        Text("Nothing else: not the songs, albums or playlists, not when you listened. Only each recent track's artist and genre are read, from your last 15 plays.")
             .font(.callout).foregroundStyle(dim)
         PrimaryButton(title: "SHARE AND GET MY BADGE", action: issue)
         SecondaryButton(title: "DON'T SHARE", action: cancel)

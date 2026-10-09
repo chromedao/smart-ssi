@@ -40,7 +40,8 @@ use tlsn::{
     verifier::{VerifierCommitStart, VerifierOutput},
     webpki::RootCertStore,
 };
-use tlsn_formats::http::{BodyContent, DefaultHttpCommitter, HttpCommit, HttpTranscript};
+use tlsn::rangeset::{iter::{FromRangeIterator, IntoRangeIterator}, set::RangeSet};
+use tlsn_formats::http::{BodyContent, HttpTranscript};
 
 pub mod sources;
 pub use sources::{Subject, github::REVEALED_FIELDS, interpret};
@@ -220,7 +221,15 @@ pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + S
     let transcript = HttpTranscript::parse(prover.transcript())?;
 
     let mut commit = TranscriptCommitConfig::builder(prover.transcript());
-    DefaultHttpCommitter::default().commit_transcript(&mut commit, &transcript)?;
+    // Commit only what the presentation will reveal: one hash commitment per disclosed part. Committing every
+    // JSON field (the default) means thousands of zero-knowledge hashes for a large answer like Apple Music's.
+    let disclosed = disclosure(&transcript, http.host)?;
+    for range in &disclosed.sent {
+        commit.commit_sent(range)?;
+    }
+    for range in &disclosed.recv {
+        commit.commit_recv(range)?;
+    }
     let mut request_config = RequestConfig::builder();
     request_config.transcript_commit(commit.build()?);
     let request_config = request_config.build()?;
@@ -346,54 +355,73 @@ async fn recv_frame<S: futures::io::AsyncRead + Unpin>(socket: &mut S) -> Result
 pub fn present(attestation: &Attestation, secrets: &Secrets) -> Result<Presentation> {
     let transcript = HttpTranscript::parse(secrets.transcript())?;
     let mut builder = secrets.transcript_proof_builder();
-    let host = secrets.server_name().to_string();
+    let disclosed = disclosure(&transcript, &secrets.server_name().to_string())?;
+    for range in &disclosed.sent {
+        builder.reveal_sent(range)?;
+    }
+    for range in &disclosed.recv {
+        builder.reveal_recv(range)?;
+    }
+    let provider = CryptoProvider::default();
+    let mut presentation = attestation.presentation_builder(&provider);
+    presentation.identity_proof(secrets.identity_proof()).transcript_proof(builder.build()?);
+    Ok(presentation.build()?)
+}
 
-    let request = &transcript.requests[0];
-    builder.reveal_sent(request.without_data())?;
-    builder.reveal_sent(&request.request.target)?;
-    // Every header name is shown; secret values (tokens) stay hidden.
+/// What a proof discloses, as separate parts: the request with every header name but no secret value, and the
+/// answer as the source's reveal policy says. The same parts are committed (step 1) and revealed (step 2): a
+/// revealed range must be exactly covered by commitments.
+fn ranges(part: impl IntoRangeIterator<usize>) -> RangeSet<usize> {
+    RangeSet::from_range_iter(part)
+}
+
+struct Disclosure {
+    sent: Vec<RangeSet<usize>>,
+    recv: Vec<RangeSet<usize>>,
+}
+
+fn disclosure(transcript: &HttpTranscript, host: &str) -> Result<Disclosure> {
+    let mut sent = Vec::new();
+    let request = transcript.requests.first().context("no request")?;
+    sent.push(request.without_data());
+    sent.push(ranges(&request.request.target));
     for header in &request.headers {
-        builder.reveal_sent(header.without_value())?;
+        sent.push(ranges(header.without_value()));
         if !sources::SECRET_HEADERS.iter().any(|name| header.name.as_str().eq_ignore_ascii_case(name)) {
-            builder.reveal_sent(&header.value)?;
+            sent.push(ranges(&header.value));
         }
     }
     if let Some(body) = &request.body {
-        builder.reveal_sent(body)?;
+        sent.push(ranges(body));
     }
 
-    let response = &transcript.responses[0];
-    builder.reveal_recv(response.without_data())?;
+    let mut recv = Vec::new();
+    let response = transcript.responses.first().context("no response")?;
+    recv.push(response.without_data());
     let body = response.body.as_ref().context("response has no body")?;
-    match sources::reveal(&host, &request.request.target.as_str()) {
+    match sources::reveal(host, &request.request.target.as_str()) {
         sources::Reveal::WholeResponse => {
             // API response headers carry nothing personal (request id, rate limits); the verifier needs them
             // to find the body and see whether it is chunked.
             for header in &response.headers {
-                builder.reveal_recv(header)?;
+                recv.push(ranges(header));
             }
-            builder.reveal_recv(body)?;
+            recv.push(ranges(body));
         }
         sources::Reveal::RootFields(fields) => {
             let JsonValue::Object(object) = &json_root(body)? else { bail!("expected a JSON object") };
-            // The committer commits each pair in two parts (key, then value): reveal both for the chosen fields.
             for field in fields {
                 let kv = object
                     .elems
                     .iter()
                     .find(|kv| kv.key.view().as_str().trim_matches('"') == *field)
                     .with_context(|| format!("missing field {field}"))?;
-                builder.reveal_recv(kv.without_value())?;
-                builder.reveal_recv(&kv.value)?;
+                recv.push(ranges(kv));
             }
         }
-        sources::Reveal::KeysAnywhere(keys) => reveal_keys(&mut builder, &json_root(body)?, keys)?,
+        sources::Reveal::KeysAnywhere(keys) => collect_keys(&json_root(body)?, keys, &mut recv),
     }
-
-    let provider = CryptoProvider::default();
-    let mut presentation = attestation.presentation_builder(&provider);
-    presentation.identity_proof(secrets.identity_proof()).transcript_proof(builder.build()?);
-    Ok(presentation.build()?)
+    Ok(Disclosure { sent, recv })
 }
 
 use tlsn_formats::spansy::json::JsonValue;
@@ -405,27 +433,21 @@ fn json_root(body: &tlsn_formats::http::Body) -> Result<JsonValue> {
     Ok(document.root.clone())
 }
 
-/// Reveal every pair whose key is in `keys`, at any depth, and nothing else.
-fn reveal_keys(builder: &mut tlsn::transcript::TranscriptProofBuilder, value: &JsonValue, keys: &[&str]) -> Result<()> {
+/// Every `"key":value` pair whose key is in `keys`, at any depth, and nothing else.
+fn collect_keys(value: &JsonValue, keys: &[&str], out: &mut Vec<RangeSet<usize>>) {
     match value {
         JsonValue::Object(object) => {
             for kv in &object.elems {
                 if keys.contains(&kv.key.view().as_str().trim_matches('"')) {
-                    builder.reveal_recv(kv.without_value())?;
-                    builder.reveal_recv(&kv.value)?;
+                    out.push(ranges(kv));
                 } else {
-                    reveal_keys(builder, &kv.value, keys)?;
+                    collect_keys(&kv.value, keys, out);
                 }
             }
         }
-        JsonValue::Array(array) => {
-            for element in &array.elems {
-                reveal_keys(builder, element, keys)?;
-            }
-        }
+        JsonValue::Array(array) => array.elems.iter().for_each(|element| collect_keys(element, keys, out)),
         _ => {}
     }
-    Ok(())
 }
 
 /// Step 3, issuer side: verify the presentation and read the revealed fields back.
