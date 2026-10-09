@@ -46,11 +46,14 @@ enum Command {
         #[arg(long)]
         trust: String,
     },
-    /// Prove facts about a GitHub account.
+    /// Prove facts about an account: GitHub by default, Apple Music with --apple-music.
     Prove {
-        /// Public account to prove facts about (development: does not prove ownership).
+        /// Public GitHub account to prove facts about (development: does not prove ownership).
         /// Without it, proves the account of the OAuth token in $GITHUB_TOKEN.
         login: Option<String>,
+        /// Prove recently played Apple Music tracks, with $APPLE_MUSIC_DEVELOPER_TOKEN and $APPLE_MUSIC_USER_TOKEN.
+        #[arg(long)]
+        apple_music: bool,
         /// Notary address: host:port (TCP) or ws:// / wss:// URL. Without it, an in-process notary with a development key is used.
         #[arg(long)]
         notary: Option<String>,
@@ -80,10 +83,15 @@ async fn main() -> Result<()> {
             println!("{}", public_key_hex(&load_or_create_key(&key)?)?);
             Ok(())
         }
-        Command::Prove { login, notary: address, trust, out } => {
+        Command::Prove { login, apple_music, notary: address, trust, out } => {
+            // Credentials from the environment only: never on the command line, where shells and `ps` keep it.
+            let env = |name: &str| std::env::var(name).map_err(|_| anyhow::anyhow!("set {name}"));
             let subject = match login {
+                _ if apple_music => Subject::AppleMusic {
+                    developer_token: env("APPLE_MUSIC_DEVELOPER_TOKEN")?,
+                    user_token: env("APPLE_MUSIC_USER_TOKEN")?,
+                },
                 Some(login) => Subject::GithubPublic { login },
-                // From the environment only: never on the command line, where shells and `ps` would keep it.
                 None => Subject::GithubDeveloper {
                     token: std::env::var("GITHUB_TOKEN")
                         .map_err(|_| anyhow::anyhow!("give a login, or set GITHUB_TOKEN to prove your own account"))?,
@@ -125,6 +133,7 @@ async fn prove(subject: &Subject, address: Option<String>, trust: Option<String>
     match subject {
         Subject::GithubDeveloper { .. } => println!("2/4 presented: the developer query and GitHub's answer revealed, the token hidden"),
         Subject::GithubPublic { .. } => println!("2/4 presented: only {} revealed", REVEALED_FIELDS.join(", ")),
+        Subject::AppleMusic { .. } => println!("2/4 presented: only each track's artist and genres revealed, the tokens hidden"),
     }
 
     let revealed = verify(&presentation, trust.as_deref())?;

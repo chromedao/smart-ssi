@@ -54,11 +54,11 @@ pub const MAX_RECV_DATA: usize = 1 << 14;
 pub const DEV_NOTARY_KEY: [u8; 32] = [7u8; 32];
 /// MPC-TLS sizing. The phone uploads preprocessing data in proportion to these limits, so they are kept
 /// close to what GitHub needs. Experiment overrides: SMART_SSI_MAX_SENT, SMART_SSI_MAX_RECV, SMART_SSI_NETWORK.
-fn mpc_tls_config() -> Result<MpcTlsConfig> {
+fn mpc_tls_config(max_recv: usize) -> Result<MpcTlsConfig> {
     let env = |name: &str, default: usize| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
     let mut config = MpcTlsConfig::builder()
         .max_sent_data(env("SMART_SSI_MAX_SENT", MAX_SENT_DATA))
-        .max_recv_data(env("SMART_SSI_MAX_RECV", MAX_RECV_DATA));
+        .max_recv_data(env("SMART_SSI_MAX_RECV", max_recv));
     if std::env::var("SMART_SSI_NETWORK").as_deref() == Ok("bandwidth") {
         config = config.network(NetworkSetting::Bandwidth);
     }
@@ -176,12 +176,12 @@ pub async fn notarize_io<S: futures::io::AsyncRead + futures::io::AsyncWrite + S
     let (driver, mut handle) = session.split();
     let driver_task = tokio::spawn(driver);
 
+    let http = subject.request();
     let prover = handle
         .new_prover(ProverConfig::builder().build()?)?
-        .commit(mpc_tls_config()?)
+        .commit(mpc_tls_config(http.max_recv)?)
         .await?;
 
-    let http = subject.request();
     let client_socket = tokio::net::TcpStream::connect((http.host, 443)).await?;
     let (tls_connection, prover) = prover.connect(
         TlsClientConfig::builder()
@@ -365,36 +365,67 @@ pub fn present(attestation: &Attestation, secrets: &Secrets) -> Result<Presentat
     let response = &transcript.responses[0];
     builder.reveal_recv(response.without_data())?;
     let body = response.body.as_ref().context("response has no body")?;
-    if sources::reveals_whole_response(&host, &request.request.target.as_str()) {
-        // API response headers carry nothing personal (request id, rate limits); the verifier needs them to
-        // find the body and see whether it is chunked.
-        for header in &response.headers {
-            builder.reveal_recv(header)?;
+    match sources::reveal(&host, &request.request.target.as_str()) {
+        sources::Reveal::WholeResponse => {
+            // API response headers carry nothing personal (request id, rate limits); the verifier needs them
+            // to find the body and see whether it is chunked.
+            for header in &response.headers {
+                builder.reveal_recv(header)?;
+            }
+            builder.reveal_recv(body)?;
         }
-        builder.reveal_recv(body)?;
-    } else {
-        let BodyContent::Json(document) = &body.content else {
-            bail!("expected a JSON body");
-        };
-        let tlsn_formats::spansy::json::JsonValue::Object(object) = &document.root else {
-            bail!("expected a JSON object");
-        };
-        // The committer commits each pair in two parts (key, then value): reveal both for the chosen fields.
-        for field in REVEALED_FIELDS {
-            let kv = object
-                .elems
-                .iter()
-                .find(|kv| kv.key.view().as_str().trim_matches('"') == field)
-                .with_context(|| format!("missing field {field}"))?;
-            builder.reveal_recv(kv.without_value())?;
-            builder.reveal_recv(&kv.value)?;
+        sources::Reveal::RootFields(fields) => {
+            let JsonValue::Object(object) = &json_root(body)? else { bail!("expected a JSON object") };
+            // The committer commits each pair in two parts (key, then value): reveal both for the chosen fields.
+            for field in fields {
+                let kv = object
+                    .elems
+                    .iter()
+                    .find(|kv| kv.key.view().as_str().trim_matches('"') == *field)
+                    .with_context(|| format!("missing field {field}"))?;
+                builder.reveal_recv(kv.without_value())?;
+                builder.reveal_recv(&kv.value)?;
+            }
         }
+        sources::Reveal::KeysAnywhere(keys) => reveal_keys(&mut builder, &json_root(body)?, keys)?,
     }
 
     let provider = CryptoProvider::default();
     let mut presentation = attestation.presentation_builder(&provider);
     presentation.identity_proof(secrets.identity_proof()).transcript_proof(builder.build()?);
     Ok(presentation.build()?)
+}
+
+use tlsn_formats::spansy::json::JsonValue;
+
+fn json_root(body: &tlsn_formats::http::Body) -> Result<JsonValue> {
+    let BodyContent::Json(document) = &body.content else {
+        bail!("expected a JSON body");
+    };
+    Ok(document.root.clone())
+}
+
+/// Reveal every pair whose key is in `keys`, at any depth, and nothing else.
+fn reveal_keys(builder: &mut tlsn::transcript::TranscriptProofBuilder, value: &JsonValue, keys: &[&str]) -> Result<()> {
+    match value {
+        JsonValue::Object(object) => {
+            for kv in &object.elems {
+                if keys.contains(&kv.key.view().as_str().trim_matches('"')) {
+                    builder.reveal_recv(kv.without_value())?;
+                    builder.reveal_recv(&kv.value)?;
+                } else {
+                    reveal_keys(builder, &kv.value, keys)?;
+                }
+            }
+        }
+        JsonValue::Array(array) => {
+            for element in &array.elems {
+                reveal_keys(builder, element, keys)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Step 3, issuer side: verify the presentation and read the revealed fields back.

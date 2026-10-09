@@ -5,6 +5,7 @@
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
 
+pub mod apple_music;
 pub mod github;
 
 /// What the user proves, and the credentials to ask for it. No Debug: tokens must never reach a log.
@@ -13,6 +14,8 @@ pub enum Subject {
     GithubDeveloper { token: String },
     /// Public facts about any GitHub account (`GET /users/<login>`): not ownership. Development only.
     GithubPublic { login: String },
+    /// What the user listens to: their recently played Apple Music tracks (MusicKit developer + user tokens).
+    AppleMusic { developer_token: String, user_token: String },
 }
 
 impl std::fmt::Display for Subject {
@@ -20,6 +23,7 @@ impl std::fmt::Display for Subject {
         match self {
             Subject::GithubDeveloper { .. } => write!(f, "the token owner's GitHub developer profile"),
             Subject::GithubPublic { login } => write!(f, "public GitHub account {login}"),
+            Subject::AppleMusic { .. } => write!(f, "the user's recently played Apple Music tracks"),
         }
     }
 }
@@ -32,6 +36,8 @@ pub struct HttpRequest {
     /// Source-specific headers, credentials included (listed in SECRET_HEADERS, so never revealed).
     pub headers: Vec<(&'static str, String)>,
     pub body: Option<String>,
+    /// Bytes reserved for the answer (MPC-TLS). Received data costs little; requests stay tight.
+    pub max_recv: usize,
 }
 
 impl Subject {
@@ -39,6 +45,7 @@ impl Subject {
         match self {
             Subject::GithubDeveloper { token } => github::developer_request(token),
             Subject::GithubPublic { login } => github::public_request(login),
+            Subject::AppleMusic { developer_token, user_token } => apple_music::request(developer_token, user_token),
         }
     }
 }
@@ -48,14 +55,25 @@ pub const SECRET_HEADERS: [&str; 3] = ["authorization", "cookie", "music-user-to
 
 /// Hosts the verifier accepts, by TLS server name.
 pub fn is_known_host(host: &str) -> bool {
-    host == github::HOST
+    [github::HOST, apple_music::HOST].contains(&host)
 }
 
-/// Whether the presentation reveals the whole response. Requests ask only for what the badge shows, so the
-/// answer is revealed as is; the GitHub public-profile request is the exception (it gets a full profile and
-/// reveals three fields).
-pub fn reveals_whole_response(host: &str, target: &str) -> bool {
-    !(host == github::HOST && target.starts_with("/users/"))
+/// What of the answer a presentation reveals.
+pub enum Reveal {
+    /// Everything: the request asked only for what the badge shows.
+    WholeResponse,
+    /// These fields of the top-level JSON object.
+    RootFields(&'static [&'static str]),
+    /// Every occurrence of these keys, at any depth (e.g. each track's artist), and nothing else.
+    KeysAnywhere(&'static [&'static str]),
+}
+
+pub fn reveal(host: &str, target: &str) -> Reveal {
+    match host {
+        github::HOST if target.starts_with("/users/") => Reveal::RootFields(&github::REVEALED_FIELDS),
+        apple_music::HOST => Reveal::KeysAnywhere(&apple_music::REVEALED_KEYS),
+        _ => Reveal::WholeResponse,
+    }
 }
 
 /// Step 3 for one source: check the revealed request is the expected one and read the revealed answer.
@@ -63,6 +81,7 @@ pub fn reveals_whole_response(host: &str, target: &str) -> bool {
 pub fn read(host: &str, sent: &str, received: &str) -> Result<Map<String, Value>> {
     match host {
         github::HOST => github::read(sent, received),
+        apple_music::HOST => apple_music::read(sent, received),
         _ => bail!("no source for {host}"),
     }
 }
@@ -71,6 +90,7 @@ pub fn read(host: &str, sent: &str, received: &str) -> Result<Map<String, Value>
 pub fn interpret(revealed: &Value) -> Result<Value> {
     match revealed["server"].as_str() {
         Some(github::HOST) | None => github::interpret(revealed),
+        Some(apple_music::HOST) => apple_music::interpret(revealed),
         Some(other) => bail!("no source for {other}"),
     }
 }
@@ -96,6 +116,43 @@ fn dechunk(body: &str) -> Result<String> {
         out.push_str(after.get(..size).context("short chunk")?);
         rest = after.get(size + 2..).context("short chunk")?;
     }
+}
+
+/// Every revealed value of `key` in a partially revealed JSON answer: `"key":<value>` where both the key and
+/// its value were revealed (hidden bytes are `\0`, so a hidden value never parses).
+pub(crate) fn revealed_values(received: &str, key: &str) -> Vec<Value> {
+    let marker = format!("\"{key}\":");
+    received
+        .match_indices(&marker)
+        .filter_map(|(at, _)| serde_json::Deserializer::from_str(&received[at + marker.len()..]).into_iter::<Value>().next()?.ok())
+        .collect()
+}
+
+/// "A:62,B:21,C:9,Other:8": shares of the largest counts in percent (rounded, summing to 100), the rest as Other.
+pub fn shares(counts: &[(String, u64)], top: usize) -> String {
+    let mut counts: Vec<(&str, u64)> = counts.iter().map(|(name, count)| (name.as_str(), *count)).filter(|(_, c)| *c > 0).collect();
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    let total: u64 = counts.iter().map(|(_, c)| c).sum();
+    if total == 0 {
+        return String::new();
+    }
+    let mut kept: Vec<(String, u64)> = Vec::new();
+    let mut other = 0;
+    for (index, (name, count)) in counts.iter().enumerate() {
+        if index < top && *name != "Other" { kept.push((name.to_string(), *count)) } else { other += count }
+    }
+    if other > 0 {
+        kept.push(("Other".into(), other));
+    }
+    let mut percents: Vec<u64> = kept.iter().map(|(_, c)| c * 100 / total).collect();
+    // Hand out the rounding remainder to the largest shares so the total is 100.
+    let mut missing = 100 - percents.iter().sum::<u64>();
+    for p in percents.iter_mut() {
+        if missing == 0 { break }
+        *p += 1;
+        missing -= 1;
+    }
+    kept.iter().zip(percents).filter(|(_, p)| *p > 0).map(|((name, _), p)| format!("{name}:{p}")).collect::<Vec<_>>().join(",")
 }
 
 /// The request line and body of a revealed request.

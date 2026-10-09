@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
-use super::{HttpRequest, request_parts, revealed_json};
+use super::{HttpRequest, request_parts, revealed_json, shares};
 
 pub const HOST: &str = "api.github.com";
 
@@ -38,11 +38,12 @@ pub fn developer_request(token: &str) -> HttpRequest {
             (ACCEPT.0, ACCEPT.1.into()),
         ],
         body: Some(developer_query_body()),
+        max_recv: 1 << 14,
     }
 }
 
 pub fn public_request(login: &str) -> HttpRequest {
-    HttpRequest { host: HOST, method: "GET", path: format!("/users/{login}"), headers: vec![(ACCEPT.0, ACCEPT.1.into())], body: None }
+    HttpRequest { host: HOST, method: "GET", path: format!("/users/{login}"), headers: vec![(ACCEPT.0, ACCEPT.1.into())], body: None, max_recv: 1 << 14 }
 }
 
 /// Which request was proven decides what is proven: /graphql (and /user, older apps) is the token owner's own
@@ -162,31 +163,10 @@ fn interpret_developer(revealed: &Value) -> Result<Value> {
     }))
 }
 
-/// "TypeScript:62,Rust:21,Swift:9,Other:8": the top languages by the user's commits over the last 12 months, in
-/// percent (rounded, summing to 100), the rest grouped as Other.
+/// "TypeScript:62,Rust:21,Swift:9,Other:8": the top languages by the user's commits over the last 12 months.
 pub fn language_shares(languages: &[Value]) -> String {
-    let counts: Vec<(&str, u64)> = languages.iter().filter_map(|l| Some((l["name"].as_str()?, l["commits"].as_u64()?))).filter(|(_, c)| *c > 0).collect();
-    let total: u64 = counts.iter().map(|(_, c)| c).sum();
-    if total == 0 {
-        return String::new();
-    }
-    let mut shares: Vec<(String, u64)> = Vec::new();
-    let mut other = 0;
-    for (index, (name, commits)) in counts.iter().enumerate() {
-        if index < 4 && *name != "Other" { shares.push((name.to_string(), *commits)) } else { other += commits }
-    }
-    if other > 0 {
-        shares.push(("Other".into(), other));
-    }
-    let mut percents: Vec<u64> = shares.iter().map(|(_, c)| c * 100 / total).collect();
-    // Hand out the rounding remainder to the largest shares so the total is 100.
-    let mut missing = 100 - percents.iter().sum::<u64>();
-    for p in percents.iter_mut() {
-        if missing == 0 { break }
-        *p += 1;
-        missing -= 1;
-    }
-    shares.iter().zip(percents).filter(|(_, p)| *p > 0).map(|((name, _), p)| format!("{name}:{p}")).collect::<Vec<_>>().join(",")
+    let counts: Vec<(String, u64)> = languages.iter().filter_map(|l| Some((l["name"].as_str()?.to_string(), l["commits"].as_u64()?))).collect();
+    shares(&counts, 4)
 }
 
 #[cfg(test)]
