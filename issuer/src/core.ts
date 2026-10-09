@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  SOLANA_ATTESTATION_SERVICE_PROGRAM_ADDRESS,
   SchemaDataType as S,
   deserializeAttestationData,
   fetchMaybeAttestation,
@@ -27,7 +28,7 @@ import {
   getCreateSchemaInstruction,
   serializeAttestationData,
 } from '@solana/attestation';
-import { createClient, createKeyPairSignerFromPrivateKeyBytes, lamports, type Address, type Instruction, type KeyPairSigner } from '@solana/kit';
+import { createClient, createKeyPairSignerFromPrivateKeyBytes, getAddressDecoder, lamports, type Address, type Base58EncodedBytes, type Instruction, type KeyPairSigner } from '@solana/kit';
 import { solanaDevnetRpc } from '@solana/kit-plugin-rpc';
 import { payer } from '@solana/kit-plugin-signer';
 import { fetchSysvarClock } from '@solana/sysvars';
@@ -51,9 +52,14 @@ const SCHEMAS = {
     fields: ['claim', 'login', 'since_year', 'years_active', 'contributions_12m', 'repos_contributed', 'languages', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
     layout: [S.String, S.String, S.U16, S.U8, S.U32, S.U32, S.String, S.String, S.String, S.String, S.String],
   },
+  3: {
+    description: 'Smart-SSI: GitHub developer, tied to the GitHub account id (one account, one badge)',
+    fields: ['claim', 'github_id', 'login', 'since_year', 'years_active', 'contributions_12m', 'repos_contributed', 'languages', 'source', 'proof_ref', 'rules_hash', 'proven_at'],
+    layout: [S.String, S.U64, S.String, S.U16, S.U8, S.U32, S.U32, S.String, S.String, S.String, S.String, S.String],
+  },
 } as const;
 type Version = keyof typeof SCHEMAS;
-const VERSIONS: Version[] = [2, 1];
+const VERSIONS: Version[] = [3, 2, 1];
 const EXPIRY_DAYS = 365;
 export const explorer = (account: string) => `https://explorer.solana.com/address/${account}?cluster=devnet`;
 export const sha256 = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex');
@@ -144,7 +150,7 @@ export type Claim = {
   data: { login: string; source: string; proven_at: string } & Record<string, unknown>;
 };
 
-const versionOf = (claim: Claim): Version => (claim.schema.endsWith('v2') ? 2 : 1);
+const versionOf = (claim: Claim): Version => Number(claim.schema.match(/v(\d+)$/)?.[1] ?? 1) as Version;
 
 /** Verify a presentation with the Rust verifier, against the trusted notary key. Throws if it is not valid. */
 export function verifyPresentation(presentation: Uint8Array): Claim {
@@ -185,8 +191,19 @@ export async function issue(r: Roles, user: Address, claim: Claim, presentation:
   const version = versionOf(claim);
   const data: Record<string, unknown> = { claim: claim.claim };
   for (const field of SCHEMAS[version].fields) if (field in claim.data) data[field] = claim.data[field];
+  if ('github_id' in data) data.github_id = BigInt(data.github_id as number);
   Object.assign(data, { proof_ref: sha256(presentation), rules_hash: sha256(claim.rule) });
-  // One badge per user: the new one replaces any previous one, in either schema version.
+  // One GitHub account, one badge: a badge for this account on another wallet (lost or replaced phone)
+  // moves here. The issuer signs the attestations, so it can close them.
+  const movedFrom: Address[] = [];
+  if (version === 3) {
+    for (const { address: previous, nonce } of await badgesOfGithubAccount(r, Number(data.github_id))) {
+      if (nonce === user) continue;
+      await send(r, getCloseAttestationInstruction({ payer: r.client.payer, attestation: previous, authority: r.signer, credential: r.credential }));
+      movedFrom.push(nonce);
+    }
+  }
+  // One badge per user: the new one replaces any previous one, in any schema version.
   for (const other of VERSIONS) {
     const previous = await attestationAddress(r, user, other);
     if ((await fetchMaybeAttestation(r.client.rpc, previous)).exists) {
@@ -208,7 +225,31 @@ export async function issue(r: Roles, user: Address, claim: Claim, presentation:
       data: serializeAttestationData(schema.data, data),
     }),
   );
-  return { attestation, signature, data };
+  const shown = Object.fromEntries(Object.entries(data).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]));
+  return { attestation, signature, data: shown, movedFrom };
+}
+
+/** v3 badges of a GitHub account, found on Solana: attestations under our credential and schema v3 whose
+ *  github_id matches. Attestation layout: discriminator, nonce, credential, schema, data (u32 length + bytes). */
+async function badgesOfGithubAccount(r: Roles, githubId: number) {
+  const accounts = await r.client.rpc
+    .getProgramAccounts(SOLANA_ATTESTATION_SERVICE_PROGRAM_ADDRESS, {
+      encoding: 'base64',
+      filters: [
+        { memcmp: { offset: 33n, bytes: r.credential as string as Base58EncodedBytes, encoding: 'base58' } },
+        { memcmp: { offset: 65n, bytes: r.schemas[3] as string as Base58EncodedBytes, encoding: 'base58' } },
+      ],
+    })
+    .send();
+  const found: { address: Address; nonce: Address }[] = [];
+  for (const { pubkey, account } of accounts) {
+    const bytes = Buffer.from(account.data[0], 'base64');
+    const claimLength = bytes.readUInt32LE(101);
+    if (bytes.readBigUInt64LE(105 + claimLength) === BigInt(githubId)) {
+      found.push({ address: pubkey, nonce: getAddressDecoder().decode(bytes.subarray(1, 33)) });
+    }
+  }
+  return found;
 }
 
 export type CheckResult =
@@ -229,7 +270,10 @@ export async function check(r: Roles, user: Address): Promise<CheckResult> {
     }
     const { unixTimestamp } = await fetchSysvarClock(r.client.rpc);
     if (attestation.data.expiry !== 0n && unixTimestamp >= attestation.data.expiry) return { valid: false, attestation: address, reason: 'expired' };
-    return { valid: true, attestation: address, version, data: deserializeAttestationData(schema.data, attestation.data.data) as Record<string, unknown> };
+    const data = deserializeAttestationData(schema.data, attestation.data.data) as Record<string, unknown>;
+    // U64 fields (github_id) come back as bigint, which JSON cannot carry; GitHub ids fit in a number.
+    for (const [key, value] of Object.entries(data)) if (typeof value === 'bigint') data[key] = Number(value);
+    return { valid: true, attestation: address, version, data };
   }
   return { valid: false, attestation: await attestationAddress(r, user, 2), reason: 'no attestation (never issued, or revoked)' };
 }

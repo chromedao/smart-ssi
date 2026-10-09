@@ -107,7 +107,8 @@ async function postAttestation(r: Roles, body: Record<string, unknown>) {
 
   const result = await serialized(() => issue(r, wallet, claim, presentation));
   markUsed(proofRef, wallet);
-  return { status: 201, body: { claim: claim.claim, attestation: result.attestation, explorer: explorer(result.attestation), transaction: result.signature, data: result.data } };
+  if (result.movedFrom.length) console.log(`badge for GitHub account ${claim.data.github_id} moved from ${result.movedFrom.join(', ')} to ${wallet}`);
+  return { status: 201, body: { claim: claim.claim, attestation: result.attestation, explorer: explorer(result.attestation), transaction: result.signature, data: result.data, movedFrom: result.movedFrom } };
 }
 
 async function deleteAttestation(r: Roles, wallet: Address, body: Record<string, unknown>) {

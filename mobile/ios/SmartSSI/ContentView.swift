@@ -217,8 +217,10 @@ private struct MeTab: View {
     var body: some View {
         Page(title: "Me") {
             InfoBlock(icon: "key", title: "Your private key",
-                      text: "Created on this phone when you first opened the app. It signs your requests and never leaves the phone; there is no recovery phrase to keep. Your badges are tied to it.")
+                      text: "Created on this phone when you first opened the app; it signs your requests. It is kept in your iCloud Keychain, end-to-end encrypted: a new iPhone on the same Apple account gets it back. No recovery phrase to keep.")
             Text(model.walletAddress).font(.caption2.monospaced()).foregroundStyle(dim).textSelection(.enabled)
+            InfoBlock(icon: "arrow.triangle.2.circlepath", title: "Lost your phone?",
+                      text: "Install Smart-SSI on the new one and sign in to GitHub again: your badge moves to the new phone and the old one stops working. One GitHub account, one badge.")
             InfoBlock(icon: "eye.slash", title: "What Chrome DAO sees",
                       text: "Only the facts you agree to share on the last screen of a verification. Never your passwords, tokens, email or private data: your phone proves the facts itself, with a notary that co-signs without seeing the content.")
             InfoBlock(icon: "testtube.2", title: "Test version",

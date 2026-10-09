@@ -56,7 +56,7 @@ pub const REVEALED_FIELDS: [&str; 3] = ["login", "public_repos", "created_at"];
 /// The GraphQL query for the developer badge (v2). It asks only for what the badge shows, so the whole answer
 /// is revealed; repository names are never requested, only each repository's main language. The verifier
 /// checks the request carries exactly this query.
-pub const DEVELOPER_QUERY: &str = "{viewer{login createdAt contributionsCollection{contributionYears contributionCalendar{totalContributions}commitContributionsByRepository(maxRepositories:25){contributions{totalCount}repository{primaryLanguage{name}}}}repositoriesContributedTo(includeUserRepositories:true,contributionTypes:[COMMIT,PULL_REQUEST]){totalCount}}}";
+pub const DEVELOPER_QUERY: &str = "{viewer{databaseId login createdAt contributionsCollection{contributionYears contributionCalendar{totalContributions}commitContributionsByRepository(maxRepositories:25){contributions{totalCount}repository{primaryLanguage{name}}}}repositoriesContributedTo(includeUserRepositories:true,contributionTypes:[COMMIT,PULL_REQUEST]){totalCount}}}";
 
 fn developer_query_body() -> String {
     json!({ "query": DEVELOPER_QUERY }).to_string()
@@ -549,6 +549,8 @@ fn developer_fields(viewer: &Value) -> Result<serde_json::Map<String, Value>> {
     let mut years: Vec<u64> = collection["contributionYears"].as_array().context("no contribution years")?.iter().filter_map(Value::as_u64).collect();
     years.sort();
     let mut fields = serde_json::Map::new();
+    // GitHub's permanent account id: logins can change hands, this cannot. One GitHub account, one badge.
+    fields.insert("github_id".into(), viewer["databaseId"].clone());
     fields.insert("login".into(), viewer["login"].clone());
     fields.insert("created_at".into(), viewer["createdAt"].clone());
     fields.insert("contribution_years".into(), json!(years));
@@ -595,10 +597,11 @@ fn interpret_developer(revealed: &Value) -> Result<Value> {
     let projects = revealed["repos_contributed"].as_u64().context("no projects")?;
     let active = age_years >= 1 && (contributions >= 100 || projects >= 3);
     Ok(json!({
-        "schema": "dev.github_account v2",
+        "schema": "dev.github_account v3",
         "claim": if active { "dev.active" } else { "dev.not_yet" },
         "rule": DEVELOPER_RULE,
         "data": {
+            "github_id": revealed["github_id"].as_u64().context("no GitHub id")?,
             "login": revealed["login"],
             "since_year": since,
             "years_active": years.len(),
@@ -646,7 +649,7 @@ mod tests {
     #[test]
     fn developer_badge_from_a_graphql_answer() {
         let viewer = json!({
-            "login": "jeemclr", "createdAt": "2014-03-02T10:00:00Z",
+            "databaseId": 6667123, "login": "jeemclr", "createdAt": "2014-03-02T10:00:00Z",
             "contributionsCollection": {
                 "contributionYears": [2026, 2025, 2019, 2014],
                 "contributionCalendar": { "totalContributions": 640 },
@@ -668,6 +671,7 @@ mod tests {
         let claim = interpret(&Value::Object(revealed)).unwrap();
         assert_eq!(claim["claim"], "dev.active");
         assert_eq!(claim["data"]["since_year"], 2014);
+        assert_eq!(claim["data"]["github_id"], 6667123);
         assert_eq!(claim["data"]["years_active"], 4);
         assert_eq!(claim["data"]["languages"], "TypeScript:72,Rust:19,Swift:6,Other:3");
     }

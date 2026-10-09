@@ -13,27 +13,54 @@ struct Wallet {
         try key.signature(for: Data(message.utf8)).base64EncodedString()
     }
 
+    private static let account = "smart-ssi.wallet"
+
+    /// The key lives in the iCloud Keychain: end-to-end encrypted, synced to the user's other Apple devices and
+    /// restored on a new iPhone signed in to the same Apple account. Keys from earlier builds, kept on this
+    /// device only, move there on first launch. If the key is ever lost, proving GitHub again moves the badge
+    /// to the new key (the issuer allows one badge per GitHub account). See docs/KEYS.md.
     static func loadOrCreate() throws -> Wallet {
-        let account = "smart-ssi.wallet"
-        let query: [String: Any] = [
+        let find: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
+            kSecReturnAttributes as String: true,
         ]
         var item: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data {
-            return Wallet(key: try Curve25519.Signing.PrivateKey(rawRepresentation: data))
+        if SecItemCopyMatching(find as CFDictionary, &item) == errSecSuccess,
+           let attributes = item as? [String: Any], let data = attributes[kSecValueData as String] as? Data {
+            let key = try Curve25519.Signing.PrivateKey(rawRepresentation: data)
+            if (attributes[kSecAttrSynchronizable as String] as? Bool) != true { try? backUp(key) }
+            return Wallet(key: key)
         }
         let key = Curve25519.Signing.PrivateKey()
+        try save(key)
+        return Wallet(key: key)
+    }
+
+    private static func save(_ key: Curve25519.Signing.PrivateKey) throws {
         let add: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrSynchronizable as String: true,
+            // Synced items cannot be "this device only"; the iCloud Keychain encrypts them end to end.
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
             kSecValueData as String: key.rawRepresentation,
         ]
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw NSError(domain: "Keychain", code: Int(status)) }
-        return Wallet(key: key)
+    }
+
+    /// Moves a device-only key from an earlier build into the iCloud Keychain, keeping the same key.
+    private static func backUp(_ key: Curve25519.Signing.PrivateKey) throws {
+        try save(key)
+        let local: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: false,
+        ]
+        SecItemDelete(local as CFDictionary)
     }
 }
 
