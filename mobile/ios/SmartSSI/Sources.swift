@@ -23,6 +23,8 @@ let sources: [Source] = [
            shares: ["Username", "Coding since", "Contributions over 12 months", "Projects contributed to", "Languages of your public work"], status: .available),
     Source(id: "apple_music", family: Family.appleMusic, name: "Apple Music", domain: "music.apple.com", badge: "Listener",
            shares: ["The genres in your library (a 100-song sample)", "How many songs your library holds"], status: .available),
+    Source(id: "passport", name: "Passport or ID card", domain: "ants.gouv.fr", badge: "Over 18 · one person",
+           shares: ["Over 18", "Issuing country", "An anonymous id: one badge per document"], status: .proposed),
     Source(id: "discord", name: "Discord", domain: "discord.com", badge: "CHROMES DAO member",
            shares: ["Member of the CHROMES DAO server", "Joined on", "Roles"], status: .proposed),
     Source(id: "strava", name: "Strava", domain: "strava.com", badge: "Regular athlete",
