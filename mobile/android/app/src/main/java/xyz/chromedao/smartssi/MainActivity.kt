@@ -1,11 +1,16 @@
 package xyz.chromedao.smartssi
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,6 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import uniffi.smart_ssi_mobile.GithubProof
+import uniffi.smart_ssi_mobile.proveGithubOwner
 import uniffi.smart_ssi_mobile.proveGithubPublic
 import uniffi.smart_ssi_mobile.walletAddress
 import uniffi.smart_ssi_mobile.walletNewSeed
@@ -128,6 +135,8 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String, initialNotary: Str
     var issuerUrl by remember { mutableStateOf(initialIssuer) }
     var busy by remember { mutableStateOf(false) }
     var proof by remember { mutableStateOf<GithubProof?>(null) }
+    var userCode by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     val log = remember { mutableStateListOf<String>() }
     val scope = rememberCoroutineScope()
     fun note(line: String) = log.add(0, line)
@@ -159,23 +168,59 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String, initialNotary: Str
         }
 
         Section("GITHUB") {
-            OutlinedTextField(login, { login = it }, label = { Text("login") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
-            GreenButton(if (busy) "WORKING…" else "PROVE ON THIS PHONE", enabled = !busy) {
-                if (login.isBlank()) return@GreenButton note("enter a GitHub login")
+            userCode?.let { code ->
+                Text("Code copied: $code\nPaste it on github.com and authorize.", color = Color.White, fontFamily = Mono, fontSize = 12.sp)
+            }
+            GreenButton(if (busy) "WORKING…" else "SIGN IN TO GITHUB AND PROVE", enabled = !busy) {
                 busy = true
                 proof = null
-                note("proving $login through $notary…")
                 scope.launch {
-                    val result = withContext(Dispatchers.Default) { runCatching { proveGithubPublic(login.trim(), notary) } }
+                    val result = runCatching {
+                        val github = GitHubLogin()
+                        val code = github.start()
+                        userCode = code.userCode
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard.setPrimaryClip(ClipData.newPlainText("GitHub code", code.userCode))
+                        CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(code.verificationUri))
+                        val token = github.token(code)
+                        // The device flow has no redirect: come back to the app, which closes the Custom Tab.
+                        context.startActivity(Intent(context, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                        userCode = null
+                        note("signed in to GitHub, proving through $notary…")
+                        withContext(Dispatchers.Default) { proveGithubOwner(token, notary) }
+                    }
                     busy = false
+                    userCode = null
                     result.fold(
                         {
                             proof = it
                             note("proof done in %.1f s, %d bytes".format(it.seconds, it.presentation.size))
                             Log.i("SmartSSI", "proof done in %.1f s".format(it.seconds))
                         },
-                        { note("proof failed: ${it.message}"); Log.e("SmartSSI", "proof failed: ${it.message}") },
+                        { note("failed: ${it.message}"); Log.e("SmartSSI", "sign-in or proof failed: ${it.message}") },
                     )
+                }
+            }
+        }
+
+        // Development: public facts about any account. The issuer refuses these (no ownership).
+        if (BuildConfig.DEBUG) {
+            Section("PUBLIC PROFILE (DEVELOPMENT)") {
+                OutlinedTextField(login, { login = it }, label = { Text("login") }, singleLine = true, colors = fieldColors(), modifier = Modifier.fillMaxWidth())
+                GreenButton(if (busy) "WORKING…" else "PROVE PUBLIC PROFILE", enabled = !busy) {
+                    if (login.isBlank()) return@GreenButton note("enter a GitHub login")
+                    busy = true
+                    proof = null
+                    note("proving $login through $notary…")
+                    scope.launch {
+                        val result = withContext(Dispatchers.Default) { runCatching { proveGithubPublic(login.trim(), notary) } }
+                        busy = false
+                        result.fold(
+                            { proof = it; note("proof done in %.1f s, %d bytes".format(it.seconds, it.presentation.size)) },
+                            { note("proof failed: ${it.message}") },
+                        )
+                    }
                 }
             }
         }
