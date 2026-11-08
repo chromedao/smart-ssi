@@ -45,11 +45,17 @@ struct GitHubLogin {
         let deadline = Date().addingTimeInterval(TimeInterval(code.expires_in))
         while Date() < deadline {
             try await Task.sleep(for: .seconds(interval))
-            let reply: [String: String] = try await post("https://github.com/login/oauth/access_token", [
-                "client_id": clientID,
-                "device_code": code.device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            ])
+            // A dropped connection while the user is on github.com is not a failure: ask again at the next tick.
+            let reply: [String: String]
+            do {
+                reply = try await post("https://github.com/login/oauth/access_token", [
+                    "client_id": clientID,
+                    "device_code": code.device_code,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                ])
+            } catch is URLError {
+                continue
+            }
             if let token = reply["access_token"] { return token }
             switch reply["error"] {
             case "authorization_pending": continue
