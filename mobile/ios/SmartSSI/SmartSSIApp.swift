@@ -93,6 +93,7 @@ final class BadgeModel: ObservableObject {
     @Published var flow: Flow?
     @Published var tab = Tab.badges
     @Published var walletAddress = ""
+    @Published var did = ""
     @Published var log: [String] = []
 
     // Development: `-notary host:port` and `-issuer url` at launch override the defaults.
@@ -113,6 +114,7 @@ final class BadgeModel: ObservableObject {
             let wallet = try Wallet.loadOrCreate()
             self.wallet = wallet
             walletAddress = wallet.address
+            did = wallet.did
         } catch {
             note("wallet error: \(error)")
         }

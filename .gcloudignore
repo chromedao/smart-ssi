@@ -8,3 +8,4 @@ mobile/
 **/*.key
 **/*.log
 .git/
+videos/

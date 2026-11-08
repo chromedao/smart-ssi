@@ -9,6 +9,10 @@ struct Wallet {
 
     var address: String { Base58.encode(key.publicKey.rawRepresentation) }
 
+    /// The user's DID: did:sol of this key. It needs no account on Solana: a did:sol with no DID account
+    /// resolves to a default document whose only key is this one (issuer/src/core.ts, didOf).
+    var did: String { "did:sol:devnet:\(address)" }
+
     func sign(_ message: String) throws -> String {
         try key.signature(for: Data(message.utf8)).base64EncodedString()
     }

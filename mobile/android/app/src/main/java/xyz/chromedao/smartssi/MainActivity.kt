@@ -67,6 +67,9 @@ class Wallet(context: Context) {
 
     val address: String = walletAddress(seed)
 
+    /** The user's DID: did:sol of the wallet key, no account on Solana needed (issuer/src/core.ts, didOf). */
+    val did: String = "did:sol:devnet:$address"
+
     fun sign(message: String): String = Base64.encodeToString(walletSign(seed, message), Base64.NO_WRAP)
 }
 
@@ -149,9 +152,9 @@ fun ProofScreen(wallet: Result<Wallet>, initialLogin: String, initialNotary: Str
         Text("CHROME DAO · SMART-SSI", color = Green, fontFamily = Mono, fontSize = 12.sp)
         Text("Prove what you did.\nReveal nothing else.", color = Color.White, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 22.sp)
 
-        Section("WALLET") {
+        Section("IDENTITY") {
             SelectionContainer {
-                Text(wallet.fold({ it.address }, { "error: ${it.message}" }), color = Color.White, fontFamily = Mono, fontSize = 12.sp)
+                Text(wallet.fold({ it.did }, { "error: ${it.message}" }), color = Color.White, fontFamily = Mono, fontSize = 12.sp)
             }
         }
 

@@ -16,6 +16,7 @@ Built on [TLSNotary](https://github.com/tlsnotary/tlsn) (`v0.1.0-alpha.15`), run
 | 3b | Proof of ownership: authenticated GitHub request ([#2](https://github.com/chromedao/smart-ssi/issues/2)) | Done, tested on iPhone |
 | 3c | Issuer verifies the presentation and writes the claim to the Solana Attestation Service, devnet ([#1](https://github.com/chromedao/smart-ssi/issues/1)) | Done on devnet |
 | 3d | Issuer as an HTTP API, requests signed by the wallet, replay protection ([#3](https://github.com/chromedao/smart-ssi/issues/3)) | Done |
+| 3e | Holder identity: `did:sol:devnet:<wallet>`, made from the wallet key, no account on Solana; shown in the apps, returned by the issuer API ([#10](https://github.com/chromedao/smart-ssi/issues/10)) | Done |
 | 4a | Prover library compiles for iOS (device, simulator) and Android; runs inside the iOS simulator against our notary | Done |
 | 4b | iOS app (SwiftUI + Rust via UniFFI): proof on the phone, wallet key in the Keychain, attestation through the issuer API ([#5](https://github.com/chromedao/smart-ssi/issues/5)) | Done, real iPhone |
 | 4c | Android app (Compose + Rust via UniFFI), same flow ([#6](https://github.com/chromedao/smart-ssi/issues/6)) | Done, emulator |
@@ -149,6 +150,8 @@ npm run demo-client -- ../prover/out/presentation.tlsn    # plays the app, inclu
 | `GET` | `/v1/attestations/:wallet` | none | Public: what any verifier calls. `valid` plus the data, or the reason it is invalid |
 | `POST` | `/v1/attestations` | `wallet`, `presentation` (base64), `signature` | The wallet signs `smart-ssi:issue:<sha256(presentation)>`. A proof is accepted once, within 15 minutes of being made |
 | `DELETE` | `/v1/attestations/:wallet` | `timestamp`, `signature` | The wallet signs `smart-ssi:revoke:<wallet>:<timestamp>` (within 5 minutes) |
+
+`:wallet` is a Solana address or the holder's DID, `did:sol:devnet:<address>`; `POST /v1/attestations` and `GET /v1/badges/:wallet` name the holder by DID in `subject`.
 
 Tested: 401 when another wallet signs (issue and revoke), 409 when a proof is reused, 422 for a presentation from an untrusted notary, 201 then `valid: true`, then revoke and `valid: false`.
 

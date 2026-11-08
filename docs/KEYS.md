@@ -10,6 +10,18 @@ Each user has an Ed25519 key pair made on their phone. Its public key is their w
 (get, update, remove a badge) and the QR codes they show (`smart-ssi:show:<wallet>:<time>`). It holds no
 funds: the DAO pays for accounts.
 
+## Identity (DID)
+
+The holder's DID is `did:sol:devnet:<wallet address>` ([did:sol](https://github.com/identity-com/sol-did) method,
+program `didso1Dpqpm4CsiCjzP766BGY89CAdD6ZBL68cRhFPc`, deployed on devnet and mainnet). It needs no account on
+Solana: a did:sol whose DID account does not exist resolves to a default document with one verification
+method, the wallet key, which is also the DID's authority. So every user has a DID from the first launch, the
+DAO pays nothing, and nothing about the user is written on-chain besides the badges. Badges are written for the
+wallet address, which is the DID's key: no change to the attestations.
+
+An account on Solana (`initialize`, signed by the wallet as authority and the DAO as payer) is only needed to
+change that document, for example to add a second device as a recovery key (see Later).
+
 ## Storage
 
 | Platform | Where | Protection |
@@ -53,4 +65,7 @@ Path 2 is also the anti-sybil rule: one GitHub account cannot back badges on sev
 - **Passkey-derived key** (WebAuthn PRF): the key derived from a passkey would follow the user across
   Apple, Google and password managers like 1Password. Worth it once identity carries more than badges
   (a DID for DAO votes, #10).
-- **Second device in the DID document**: register a laptop or a second phone as a recovery key (#10).
+- **Second device in the DID document**: create the did:sol account (DAO pays the rent, only for a wallet that
+  holds a badge) and add a laptop or a second phone as a verification method, so it can take the badges back
+  without re-proving. The phone builds and checks the transaction in the Rust core (`mobile/core`) before
+  signing it as authority; the issuer co-signs as fee payer.

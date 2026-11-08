@@ -267,7 +267,9 @@ private struct MeTab: View {
         Page(title: "Me") {
             InfoBlock(icon: "key", title: "Your private key",
                       text: "Created on this phone when you first opened the app; it signs your requests. It is kept in your iCloud Keychain, end-to-end encrypted: a new iPhone on the same Apple account gets it back. No recovery phrase to keep.")
-            Text(model.walletAddress).font(.caption2.monospaced()).foregroundStyle(dim).textSelection(.enabled)
+            InfoBlock(icon: "person.text.rectangle", title: "Your identity",
+                      text: "Your badges are written for this decentralized identifier (DID), made from your key. It belongs to no company, Chrome DAO included, and anyone can check it on Solana.")
+            Text(model.did).font(.caption2.monospaced()).foregroundStyle(dim).textSelection(.enabled)
             InfoBlock(icon: "arrow.triangle.2.circlepath", title: "Lost your phone?",
                       text: "Install Smart-SSI on the new one and sign in to GitHub again: your badge moves to the new phone and the old one stops working. One GitHub account, one badge.")
             InfoBlock(icon: "eye.slash", title: "What Chrome DAO sees",
