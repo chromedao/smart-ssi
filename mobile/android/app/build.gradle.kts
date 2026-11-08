@@ -15,6 +15,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         ndk { abiFilters += "arm64-v8a" }
+        // Public identifier of the Chrome DAO GitHub OAuth app (device flow), the same as iOS. Not a secret.
+        buildConfigField("String", "GITHUB_CLIENT_ID", "\"Ov23liCy3XyNiuJAZRsL\"")
     }
 
     buildTypes {
@@ -37,6 +39,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    // github.com/login/device in a Custom Tab: the browser's GitHub session, password managers, autofill.
+    implementation("androidx.browser:browser:1.8.0")
     // UniFFI's Kotlin bindings load the Rust library through JNA.
     implementation("net.java.dev.jna:jna:5.14.0@aar")
 }
