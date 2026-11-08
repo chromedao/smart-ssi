@@ -2,6 +2,8 @@
 //
 //   GET    /health
 //   GET    /v1/badges/:wallet         public: all of a wallet's valid badges, one per family
+//
+// :wallet is a Solana address or the holder's DID, did:sol:devnet:<address>. Answers name the holder by DID.
 //   GET    /v1/attestations/:wallet   public: the wallet's GitHub badge (older apps)
 //   POST   /v1/attestations           { wallet, presentation (base64), signature (base64) }
 //   DELETE /v1/attestations/:wallet   { timestamp (unix s), signature (base64), family? }
@@ -16,7 +18,7 @@ import { join } from 'node:path';
 
 import { address, getPublicKeyFromAddress, isAddress, verifySignature, type Address, type SignatureBytes } from '@solana/kit';
 
-import { ROOT, badges, check, explorer, isFamily, issue, librarySampleOffset, revoke, roles, sha256, verifyPresentation, type Roles } from './core.ts';
+import { ROOT, badges, check, didOf, explorer, isFamily, issue, librarySampleOffset, revoke, roles, sha256, verifyPresentation, type Roles } from './core.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -56,7 +58,8 @@ async function walletSigned(wallet: Address, message: string, signatureBase64: u
 }
 
 function parseWallet(value: unknown): Address {
-  if (typeof value !== 'string' || !isAddress(value)) throw new HttpError(400, 'wallet must be a Solana address');
+  if (typeof value === 'string') value = value.replace(/^did:sol:devnet:/, '');
+  if (typeof value !== 'string' || !isAddress(value)) throw new HttpError(400, 'wallet must be a Solana address or did:sol:devnet:<address>');
   return address(value);
 }
 
@@ -120,7 +123,7 @@ async function postAttestation(r: Roles, body: Record<string, unknown>) {
   const result = await serialized(() => issue(r, wallet, claim, presentation));
   markUsed(proofRef, wallet);
   if (result.movedFrom.length) console.log(`badge for GitHub account ${claim.data.github_id} moved from ${result.movedFrom.join(', ')} to ${wallet}`);
-  return { status: 201, body: { claim: claim.claim, family: result.family, attestation: result.attestation, explorer: explorer(result.attestation), transaction: result.signature, data: result.data, movedFrom: result.movedFrom } };
+  return { status: 201, body: { subject: didOf(wallet), claim: claim.claim, family: result.family, attestation: result.attestation, explorer: explorer(result.attestation), transaction: result.signature, data: result.data, movedFrom: result.movedFrom } };
 }
 
 async function deleteAttestation(r: Roles, wallet: Address, body: Record<string, unknown>) {
@@ -149,7 +152,10 @@ http
     };
     try {
       if (req.method === 'GET' && url.pathname === '/health') return reply(200, { ok: true, credential: r.credential, schema: r.schema });
-      if (req.method === 'GET' && badgesOf) return reply(200, { badges: await badges(r, parseWallet(badgesOf[1])) });
+      if (req.method === 'GET' && badgesOf) {
+        const wallet = parseWallet(badgesOf[1]);
+        return reply(200, { subject: didOf(wallet), badges: await badges(r, wallet) });
+      }
       if (!match) throw new HttpError(404, 'not found');
       if (req.method === 'GET' && match[1]) return reply(200, await check(r, parseWallet(match[1])));
       if (req.method === 'POST' && !match[1]) {

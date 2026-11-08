@@ -89,6 +89,9 @@ const spec = (family: Family, version: number) => (FAMILIES[family] as Record<nu
 const GITHUB: Family = 'dev.github_account';
 const EXPIRY_DAYS = 365;
 export const explorer = (account: string) => `https://explorer.solana.com/address/${account}?cluster=devnet`;
+/** The holder's DID: did:sol of the wallet key. It exists without an account on Solana (did:sol resolves a
+ *  wallet with no DID account to a default document whose only key is the wallet), so issuing costs nothing more. */
+export const didOf = (wallet: string) => `did:sol:devnet:${wallet}`;
 export const sha256 = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex');
 
 // --- keys -------------------------------------------------------------------
