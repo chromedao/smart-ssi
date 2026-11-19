@@ -17,7 +17,7 @@ targets:
       path: SmartSSI/Info.plist
       properties:
         CFBundleDisplayName: Smart-SSI
-        NSAppleMusicUsageDescription: Smart-SSI reads the artist and genre of your recently played tracks to make your listener badge. Song titles and albums stay on your phone.
+        NSAppleMusicUsageDescription: Smart-SSI reads the genres of a 100-song sample of your library, and how many songs it holds, to make your listener badge. It does not read song titles, artists or albums.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # Only standard encryption (HTTPS, signatures for authentication): exempt from export documentation.

@@ -30,7 +30,7 @@
 		<true/>
 	</dict>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>Smart-SSI reads the artist and genre of your recently played tracks to make your listener badge. Song titles and albums stay on your phone.</string>
+	<string>Smart-SSI reads the genres of a 100-song sample of your library, and how many songs it holds, to make your listener badge. It does not read song titles, artists or albums.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Smart-SSI connects to a development notary and issuer on your local network.</string>
 	<key>UILaunchScreen</key>
